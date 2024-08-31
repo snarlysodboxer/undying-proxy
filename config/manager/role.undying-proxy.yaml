@@ -2,8 +2,10 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: manager-role
+  name: undying-proxy
   namespace: undying-proxy
+  labels:
+    app: undying-proxy
 rules:
 - apiGroups:
   - ""

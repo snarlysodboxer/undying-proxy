@@ -20,26 +20,29 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
 // UnDyingProxySpec defines the desired state of UnDyingProxy
 type UnDyingProxySpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// Foo is an example field of UnDyingProxy. Edit undyingproxy_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+	// TODO make these immutable
+	// ListenPort is the port to listen on
+	ListenPort int `json:"listenPort"`
+	// TargetPort is the port to forward to
+	TargetPort int `json:"targetPort"`
+	// TargetHost is the address to forward to, IP or DNS resolvable name
+	TargetHost string `json:"targetHost"`
+	// TargetReadTimeoutSeconds is the timeout for reading from the target. defaults to 30 seconds
+	TargetReadTimeoutSeconds int `json:"targetReadTimeout,omitempty"`
 }
 
 // UnDyingProxyStatus defines the observed state of UnDyingProxy
 type UnDyingProxyStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// Ready is true when the proxy is ready to accept connections
+	Ready bool `json:"ready"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Ready",type="boolean",JSONPath=`.status.ready`
+// +kubebuilder:printcolumn:name="ListenPort",type="number",JSONPath=`.spec.listenPort`
 
 // UnDyingProxy is the Schema for the undyingproxies API
 type UnDyingProxy struct {

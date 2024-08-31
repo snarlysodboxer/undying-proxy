@@ -1,0 +1,10 @@
+# vim: set filetype=yaml: #
+---
+extends: default
+rules:
+  empty-lines:
+    max-end: 1
+  indentation:
+    spaces: 2
+    indent-sequences: false
+  line-length: disable

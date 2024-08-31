@@ -1,3 +1,4 @@
+---
 run:
   timeout: 5m
   allow-parallel-runners: true
@@ -9,39 +10,39 @@ issues:
   # restore some of the defaults
   # (fill in the rest as needed)
   exclude-rules:
-    - path: "api/*"
-      linters:
-        - lll
-    - path: "internal/*"
-      linters:
-        - dupl
-        - lll
+  - path: "api/*"
+    linters:
+    - lll
+  - path: "internal/*"
+    linters:
+    - dupl
+    - lll
 linters:
   disable-all: true
   enable:
-    - dupl
-    - errcheck
-    - exportloopref
-    - ginkgolinter
-    - goconst
-    - gocyclo
-    - gofmt
-    - goimports
-    - gosimple
-    - govet
-    - ineffassign
-    - lll
-    - misspell
-    - nakedret
-    - prealloc
-    - revive
-    - staticcheck
-    - typecheck
-    - unconvert
-    - unparam
-    - unused
+  - dupl
+  - errcheck
+  - exportloopref
+  - ginkgolinter
+  - goconst
+  - gocyclo
+  - gofmt
+  - goimports
+  - gosimple
+  - govet
+  - ineffassign
+  - lll
+  - misspell
+  - nakedret
+  - prealloc
+  - revive
+  - staticcheck
+  - typecheck
+  - unconvert
+  - unparam
+  - unused
 
 linters-settings:
   revive:
     rules:
-      - name: comment-spacings
+    - name: comment-spacings

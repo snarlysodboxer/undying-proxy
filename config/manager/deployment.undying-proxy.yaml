@@ -1,0 +1,83 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: undying-proxy
+  namespace: undying-proxy
+  labels:
+    app: undying-proxy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: undying-proxy
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+      labels:
+        app: undying-proxy
+    spec:
+      serviceAccountName: undying-proxy
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: undying-proxy
+        image: my-repo/undying-proxy:v0.0.0
+        imagePullPolicy: IfNotPresent
+        command:
+        - /manager
+        args:
+        - --operator-namespace=$(OPERATOR_NAMESPACE)
+        - --service-to-manage=undying-proxy  # this is default
+        - --metrics-bind-address=:8080
+        - --health-probe-bind-address=:8081
+        - --zap-devel=true  # set to false to prevent logging of normal conditions
+        env:
+        # tell the operator which namespace to watch for UnDyingProxy objects
+        - name: OPERATOR_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        ports:
+        - name: metrics
+          containerPort: 8080
+          protocol: TCP
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 500m
+            memory: 128Mi
+        livenessProbe:
+          periodSeconds: 20
+          initialDelaySeconds: 15
+          httpGet:
+            port: 8081
+            path: /healthz
+        readinessProbe:
+          periodSeconds: 10
+          initialDelaySeconds: 5
+          httpGet:
+            port: 8081
+            path: /readyz
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+      terminationGracePeriodSeconds: 10
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchLabels:
+                app: undying-proxy

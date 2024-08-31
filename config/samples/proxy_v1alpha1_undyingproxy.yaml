@@ -1,9 +1,12 @@
+---
 apiVersion: proxy.sfact.io/v1alpha1
 kind: UnDyingProxy
 metadata:
+  name: example
+  namespace: undying-proxy-123-123-123-123  # consider using a namespace per instance of undying-proxy
   labels:
-    app.kubernetes.io/name: undying-proxy
-    app.kubernetes.io/managed-by: kustomize
-  name: undyingproxy-sample
+    app: undying-proxy
 spec:
-  # TODO(user): Add fields here
+  listenPort: 1234
+  targetPort: 1234
+  targetHost: my-app.example.svc.cluster.local

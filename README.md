@@ -1,8 +1,37 @@
-# undying-proxy
-// TODO(user): Add simple overview of use/purpose
+# UnDyingProxy is a UDP forwarder for Kubernetes
+
+## Why?
+Cloud Loadbalancers can be expensive. This operator forwards UDP traffic from a single IP and many ports, to many destinations, one destination per source port for now. It is designed to be run as multiple replicas to provide high availability.
+
+Each `UnDyingProxy` object specifies one listen port, and one target host and port to forward to. E.G.
+```yaml
+---
+apiVersion: proxy.sfact.io/v1alpha1
+kind: UnDyingProxy
+metadata:
+  name: example
+  namespace: undying-proxy
+  labels:
+    app: undying-proxy
+spec:
+  listenPort: 1234
+  targetPort: 1234
+  targetHost: my-app.example.svc.cluster.local
+```
+
+This supports only paying for one Loadbalancer, or even avoiding a cloud Loadbalancer altogether. If using a cloud LoadBalancer, this operator can automatically add/remove `Ports` in a `Service` object as `UnDyingProxy` objects are created/destroyed, to open/close the ports in the LoadBalancer.
+
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+UnDyingProxy listens to UDP ports and forward packets to destination addresses and ports. Configuration is done via UnDyingProxy objects, one for each port to be forwarded. This operator works like the NGINX Ingress Controller in that it does the actual forwarding itself, rather than operating external forwarders. Therefore, it should be run as multiple replicas to provide high availability. Leader election is disabled. Currently, each listener supports forwarding to a single destination address and port.
+
+The `--operator-namespace` flag must be set, as this is a namespaced operator. The operator will only watch for UnDyingProxy objects in the namespace specified by this flag. The operator can manage a Kubernetes `Service` object's Ports to dynamically support new ingress for each UnDyingProxy, for example through a cloud provider's LoadBalancer.
+
+Run this operator once per IP to listen upon. TODO, support an annotation to set which instance of the operator will handle a given UnDyingProxy, which will allow for more than one operator in the same namespace.
+
+Use `config/manager` as example configs to customize.
+
+## TODO curate the rest of this auto-generated README
 
 ## Getting Started
 
