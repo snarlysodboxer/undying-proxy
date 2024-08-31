@@ -1,0 +1,9 @@
+apiVersion: proxy.sfact.io/v1alpha1
+kind: UnDyingProxy
+metadata:
+  labels:
+    app.kubernetes.io/name: undying-proxy
+    app.kubernetes.io/managed-by: kustomize
+  name: undyingproxy-sample
+spec:
+  # TODO(user): Add fields here
