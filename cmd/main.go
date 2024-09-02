@@ -101,6 +101,11 @@ func main() {
 		TLSOpts: tlsOpts,
 	})
 
+	// if secureMetrics is false, disable the WithAuthenticationAndAuthorization filter
+	filter := filters.WithAuthenticationAndAuthorization
+	if !secureMetrics {
+		filter = nil
+	}
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
 		// Restrict to a single Namespace
@@ -127,7 +132,7 @@ func main() {
 			// These configurations ensure that only authorized users and service accounts
 			// can access the metrics endpoint. The RBAC are configured in 'config/rbac/kustomization.yaml'. More info:
 			// https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.18.4/pkg/metrics/filters#WithAuthenticationAndAuthorization
-			FilterProvider: filters.WithAuthenticationAndAuthorization,
+			FilterProvider: filter,
 		},
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,

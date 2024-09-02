@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -35,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	"github.com/go-logr/logr"
 	proxyv1alpha1 "github.com/snarlysodboxer/undying-proxy/api/v1alpha1"
@@ -50,6 +52,44 @@ var (
 	// forwardersMux is a mutex lock for modifying forwarders
 	forwardersMux = &sync.Mutex{}
 	patchOptions  = &client.PatchOptions{FieldManager: "undying-proxy-operator"}
+)
+
+// custom metrics
+var (
+	forwardersRunning = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "undying_proxy_forwarders",
+			Help: "Number of forwarders currently running",
+		},
+	)
+	clientsConnected = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "undying_proxy_clients_connected",
+			Help: "Number of clients currently connected, by forwarder",
+		},
+		[]string{"forwarder"},
+	)
+	fromClientsToTargetBytesTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "undying_proxy_from_clients_to_target_bytes_total",
+			Help: "Number of bytes forwarded from clients to the target",
+		},
+		[]string{"forwarder"},
+	)
+	fromTargetToClientsBytesTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "undying_proxy_from_target_to_clients_bytes_total",
+			Help: "Number of bytes forwarded from the target back to the clients",
+		},
+		[]string{"forwarder"},
+	)
+	errorsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "undying_proxy_errors_total",
+			Help: "Number of errors encountered by the UnDyingProxy controller",
+		},
+		[]string{"type"},
+	)
 )
 
 // configuration vars
@@ -87,22 +127,16 @@ type Client struct {
 }
 
 func init() {
-	// TODO convert this to metrics
-	// go func() {
-	//     for {
-	//         time.Sleep(5 * time.Second)
-	//         fmt.Println("Running Forwarders:")
-	//         for name, forwarder := range forwarders {
-	//             fmt.Printf("%s: %+v\n", name, forwarder)
-	//         }
-	//     }
-	// }()
-	flag.StringVar(
-		&svcToManage,
-		"service-to-manage",
-		"undying-proxy",
-		"A Kubernetes Service Object to manage, adding/removing listenPorts, in order to expose this app to traffic for the UnDyingProxies. Service must preexist. Set to blank to disable this feature and manage the Service yourself.",
+	// Register custom metrics with the global prometheus registry
+	metrics.Registry.MustRegister(
+		forwardersRunning,
+		clientsConnected,
+		fromClientsToTargetBytesTotal,
+		fromTargetToClientsBytesTotal,
+		errorsTotal,
 	)
+
+	flag.StringVar(&svcToManage, "service-to-manage", "undying-proxy", "A Kubernetes Service Object to manage, adding/removing listenPorts, in order to expose this app to traffic for the UnDyingProxies. Service must preexist. Set to blank to disable this feature and manage the Service yourself.")
 }
 
 // +kubebuilder:rbac:groups=proxy.sfact.io,namespace=undying-proxy,resources=undyingproxies,verbs=get;list;watch;create;update;patch;delete
@@ -126,8 +160,9 @@ func (r *UnDyingProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			gLog.V(2).Info("Ignoring UnDyingProxy not found error")
 			return ctrl.Result{}, nil
 		}
-		gLog.Error(err, "Failed to fetch UnDyingProxy")
 
+		errorsTotal.WithLabelValues("FailedFetch").Inc()
+		gLog.Error(err, "Failed to fetch UnDyingProxy")
 		return ctrl.Result{}, err
 	}
 
@@ -135,6 +170,7 @@ func (r *UnDyingProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if !unDyingProxy.ObjectMeta.DeletionTimestamp.IsZero() {
 		// Handle the rare case where it's being deleted but the finalizer is not present
 		if !controllerutil.ContainsFinalizer(unDyingProxy, finalizerName) {
+			// end reconciliation
 			return ctrl.Result{}, nil
 		}
 
@@ -144,6 +180,7 @@ func (r *UnDyingProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			if apierrors.IsNotFound(err) {
 				return ctrl.Result{}, nil
 			}
+			errorsTotal.WithLabelValues("FailedFetch").Inc()
 			return ctrl.Result{}, err
 		}
 
@@ -159,6 +196,7 @@ func (r *UnDyingProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			forwardersMux.Lock()
 			delete(forwarders, forwarder.name)
 			forwardersMux.Unlock()
+			forwardersRunning.Dec()
 			gLog.V(1).Info("Forwarder is now closed")
 		}
 
@@ -166,6 +204,7 @@ func (r *UnDyingProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if svcToManage != "" {
 			if err := r.cleanupServiceForUnDyingProxy(ctx, svcToManage, unDyingProxy, gLog); err != nil {
 				gLog.Error(err, "Failed to cleanup Service for UnDyingProxy")
+				errorsTotal.WithLabelValues("FailedServiceCleanup").Inc()
 				return ctrl.Result{}, err
 			}
 		}
@@ -180,6 +219,7 @@ func (r *UnDyingProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 				return err
 			}
 			if ok := controllerutil.RemoveFinalizer(unDyingProxy, finalizerName); !ok {
+				// finalizer already removed
 				return nil
 			}
 			err := r.Update(ctx, unDyingProxy)
@@ -190,6 +230,7 @@ func (r *UnDyingProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			return err
 		})
 		if err != nil {
+			errorsTotal.WithLabelValues("FailedRemoveFinalizer").Inc()
 			gLog.Error(err, "Failed to remove finalizer")
 			return ctrl.Result{}, err
 		}
@@ -206,12 +247,13 @@ func (r *UnDyingProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 				return err
 			}
 			// AddFinalizer only adds the finalizer if it doesn't already exist
-			if controllerutil.AddFinalizer(unDyingProxy, finalizerName) {
+			if added := controllerutil.AddFinalizer(unDyingProxy, finalizerName); added {
 				return r.Update(ctx, unDyingProxy)
 			}
 			return nil
 		})
 		if err != nil {
+			errorsTotal.WithLabelValues("FailedAddFinalizer").Inc()
 			gLog.Error(err, "Failed to add finalizer")
 			return ctrl.Result{}, err
 		}
@@ -224,6 +266,7 @@ func (r *UnDyingProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	} else {
 		forwarder, err := setupUDPForwarder(unDyingProxy)
 		if err != nil {
+			errorsTotal.WithLabelValues("FailedSetupForwarder").Inc()
 			gLog.Error(err, "Failed to setup UDP Forwarder")
 			return ctrl.Result{}, err
 		}
@@ -236,6 +279,7 @@ func (r *UnDyingProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Optionally manage the Kubernetes Service
 	if svcToManage != "" {
 		if err := r.manageServiceForUnDyingProxy(ctx, svcToManage, unDyingProxy, gLog); err != nil {
+			errorsTotal.WithLabelValues("FailedManageService").Inc()
 			gLog.Error(err, "Failed to manage Service for UnDyingProxy")
 			return ctrl.Result{}, err
 		}
@@ -253,6 +297,7 @@ func (r *UnDyingProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return r.Status().Update(ctx, unDyingProxy)
 	})
 	if err != nil {
+		errorsTotal.WithLabelValues("FailedUpdateStatus").Inc()
 		gLog.Error(err, "Failed to update status")
 		return ctrl.Result{}, err
 	}
@@ -303,6 +348,7 @@ func setupUDPForwarder(unDyingProxy *proxyv1alpha1.UnDyingProxy) (*Forwarder, er
 		clients:            make(map[string]*Client),
 	}
 
+	forwardersRunning.Inc()
 	go runClientsForwarder(forwarder)
 
 	return forwarder, nil
@@ -359,9 +405,7 @@ func runClientsForwarder(forwarder *Forwarder) {
 				}
 				client.targetConnection.SetReadDeadline(time.Now().Add(forwarder.targetReadTimeout))
 
-				// TODO: metrics instead
-				// too expensive, can't log for every packet except in manual testing
-				// fLog.V(2).Info(fmt.Sprintf("Forwarded %d bytes from %s to %s", n, clientAddrStr, forwarder.targetAddress.String()))
+				fromClientsToTargetBytesTotal.WithLabelValues(forwarder.name).Add(float64(n))
 
 				continue
 			}
@@ -373,12 +417,12 @@ func runClientsForwarder(forwarder *Forwarder) {
 				fLog.V(1).Error(err, "Error connecting to target")
 				continue
 			}
-			// n, err := targetConnection.Write(buf[:n])
-			_, err = targetConnection.Write(buf[:n])
+			num, err := targetConnection.Write(buf[:n])
 			if err != nil {
 				fLog.V(1).Error(err, "Error writing to target")
 				continue
 			}
+			fromClientsToTargetBytesTotal.WithLabelValues(forwarder.name).Add(float64(num))
 
 			// create and record the tracked Client
 			client = &Client{
@@ -389,6 +433,7 @@ func runClientsForwarder(forwarder *Forwarder) {
 			clientsMux.Lock()
 			forwarder.clients[clientAddrStr] = client
 			clientsMux.Unlock()
+			clientsConnected.WithLabelValues(forwarder.name).Inc()
 
 			// handle responses from the target to the client
 			go runTargetForwarder(forwarder, client, clientsMux)
@@ -412,6 +457,7 @@ ForwardingLoop:
 		case <-client.closeChan:
 			break ForwardingLoop
 		default:
+			// TODO handle err of SetReadDeadline
 			client.targetConnection.SetReadDeadline(time.Now().Add(forwarder.targetReadTimeout))
 			n, _, err := client.targetConnection.ReadFromUDP(data) // blocks until a packet is received or deadline is reached
 			if err != nil {
@@ -423,14 +469,13 @@ ForwardingLoop:
 				break ForwardingLoop
 			}
 
-			_, err = forwarder.listenerConnection.WriteToUDP(data[:n], client.clientAddress)
+			num, err := forwarder.listenerConnection.WriteToUDP(data[:n], client.clientAddress)
 			if err != nil {
 				fLog.Error(err, "Error writing to client")
 				break ForwardingLoop
 			}
 
-			// too expensive, can't log for every packet except in manual testing
-			// fLog.V(2).Info(fmt.Sprintf("Forwarded %d bytes from %s to %s", n, forwarder.targetAddress, client.clientAddress))
+			fromTargetToClientsBytesTotal.WithLabelValues(forwarder.name).Add(float64(num))
 		}
 	}
 
@@ -438,6 +483,7 @@ ForwardingLoop:
 	delete(forwarder.clients, client.clientAddress.String())
 	clientsMux.Unlock()
 	client.targetConnection.Close()
+	clientsConnected.WithLabelValues(forwarder.name).Dec()
 }
 
 func (r *UnDyingProxyReconciler) manageServiceForUnDyingProxy(
