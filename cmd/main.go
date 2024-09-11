@@ -60,6 +60,7 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var svcToManage string
 	flag.StringVar(&operatorNamespace, "operator-namespace", "", "The Kubernetes Namespace in which to watch for UnDyingProxy objects.")
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -68,6 +69,7 @@ func main() {
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.StringVar(&svcToManage, "service-to-manage", "undying-proxy", "A Kubernetes Service Object to manage, adding/removing listenPorts, in order to expose this app to traffic for the UnDyingProxies. Service must preexist. Set to blank to disable this feature and manage the Service yourself.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -143,8 +145,9 @@ func main() {
 	}
 
 	if err = (&controller.UnDyingProxyReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:          mgr.GetClient(),
+		Scheme:          mgr.GetScheme(),
+		ServiceToManage: svcToManage,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "UnDyingProxy")
 		os.Exit(1)

@@ -32,6 +32,13 @@ Run this operator once per IP to listen upon. TODO, support an annotation to set
 Use `config/manager` as example configs to customize.
 
 ## TODO curate the rest of this auto-generated README
+- TODO We shouldn't leave a goroutine running forever for every client that ever connects. UDP is connectionless though, so we have to use readDeadline for evenutually shutting down the goroutines for that client, when no new packets have been received in a while.
+  - The fromClientsToTarget goroutine needs to stay running forever,
+  - The fromTargetToClients goroutines need to be shut down after a timeout.
+- TODO try switching shutdown from listener first to listener last
+- TODO test if recording these metrics slows things down or not
+- TODO also mutex might be slowing it down too much
+- TODO consider trying atomic like described here: https://stackoverflow.com/a/57963829/2971199
 
 ## Getting Started
 

@@ -21,8 +21,10 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -33,34 +35,38 @@ import (
 var _ = Describe("UnDyingProxy Controller", func() {
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-resource"
+		const namespace = "default"
 
 		ctx := context.Background()
 
-		typeNamespacedName := types.NamespacedName{
+		udpTypeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: namespace,
 		}
 		undyingproxy := &proxyv1alpha1.UnDyingProxy{}
 
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind UnDyingProxy")
-			err := k8sClient.Get(ctx, typeNamespacedName, undyingproxy)
+			err := k8sClient.Get(ctx, udpTypeNamespacedName, undyingproxy)
 			if err != nil && errors.IsNotFound(err) {
 				resource := &proxyv1alpha1.UnDyingProxy{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
-						Namespace: "default",
+						Namespace: namespace,
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: proxyv1alpha1.UnDyingProxySpec{
+						ListenPort: 3001,
+						TargetPort: 3002,
+						TargetHost: "localhost",
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
 		})
 
 		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
 			resource := &proxyv1alpha1.UnDyingProxy{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			err := k8sClient.Get(ctx, udpTypeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Cleanup the specific resource instance UnDyingProxy")
@@ -69,16 +75,34 @@ var _ = Describe("UnDyingProxy Controller", func() {
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &UnDyingProxyReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:          k8sClient,
+				Scheme:          k8sClient.Scheme(),
+				ServiceToManage: "undying-proxy",
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
+				NamespacedName: udpTypeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
+
+			// status.Ready
+			resource := &proxyv1alpha1.UnDyingProxy{}
+			err = k8sClient.Get(ctx, udpTypeNamespacedName, resource)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resource.Status.Ready).To(BeTrue())
+
+			// service is managed
+			svcResource := &v1.Service{}
+			err = k8sClient.Get(ctx, svcTypeNamespacedName, svcResource)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(svcResource.Spec.Ports).To(ContainElement(v1.ServicePort{
+				Name:       resourceName,
+				Port:       3001,
+				TargetPort: intstr.FromInt(3001),
+				Protocol:   v1.ProtocolUDP,
+			}))
+
+			// TODO test sending UDP traffic through the tunnel
 		})
 	})
 })

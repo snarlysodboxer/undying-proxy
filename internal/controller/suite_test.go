@@ -17,6 +17,7 @@ limitations under the License.
 package controller
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"runtime"
@@ -25,6 +26,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -42,6 +48,14 @@ import (
 var cfg *rest.Config
 var k8sClient client.Client
 var testEnv *envtest.Environment
+
+const svcToManage = "undying-proxy"
+const namespace = "default"
+
+var svcTypeNamespacedName = types.NamespacedName{
+	Name:      svcToManage,
+	Namespace: namespace,
+}
 
 func TestControllers(t *testing.T) {
 	RegisterFailHandler(Fail)
@@ -81,10 +95,44 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
 
+	// Create a Service to manage
+	ctx := context.Background()
+	service := &v1.Service{}
+
+	By("creating the Service to manage")
+	err = k8sClient.Get(ctx, svcTypeNamespacedName, service)
+	if err != nil && errors.IsNotFound(err) {
+		resource := &v1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      svcToManage,
+				Namespace: namespace,
+			},
+			Spec: v1.ServiceSpec{
+				Ports: []v1.ServicePort{
+					{
+						// only here to pass validation
+						Name:       "any-port",
+						Port:       5000,
+						TargetPort: intstr.FromInt(5000),
+						Protocol:   v1.ProtocolUDP,
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+	}
 })
 
 var _ = AfterSuite(func() {
+	ctx := context.Background()
+	svcResource := &v1.Service{}
+	err := k8sClient.Get(ctx, svcTypeNamespacedName, svcResource)
+	Expect(err).NotTo(HaveOccurred())
+
+	By("Cleanup the Service to manage")
+	Expect(k8sClient.Delete(ctx, svcResource)).To(Succeed())
+
 	By("tearing down the test environment")
-	err := testEnv.Stop()
+	err = testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })
