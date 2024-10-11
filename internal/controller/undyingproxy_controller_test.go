@@ -55,9 +55,16 @@ var _ = Describe("UnDyingProxy Controller", func() {
 						Namespace: namespace,
 					},
 					Spec: proxyv1alpha1.UnDyingProxySpec{
-						ListenPort: 3001,
-						TargetPort: 3002,
-						TargetHost: "localhost",
+						UDP: &proxyv1alpha1.UDP{
+							ListenPort: 3001,
+							TargetPort: 3002,
+							TargetHost: "localhost",
+						},
+						TCP: &proxyv1alpha1.TCP{
+							ListenPort: 3001,
+							TargetPort: 3002,
+							TargetHost: "localhost",
+						},
 					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
@@ -75,9 +82,10 @@ var _ = Describe("UnDyingProxy Controller", func() {
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &UnDyingProxyReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
-				ServiceToManage: "undying-proxy",
+				Client:             k8sClient,
+				Scheme:             k8sClient.Scheme(),
+				TCPServiceToManage: "undying-proxy-tcp",
+				UDPServiceToManage: "undying-proxy-udp",
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -93,7 +101,7 @@ var _ = Describe("UnDyingProxy Controller", func() {
 
 			// service is managed
 			svcResource := &v1.Service{}
-			err = k8sClient.Get(ctx, svcTypeNamespacedName, svcResource)
+			err = k8sClient.Get(ctx, udpSvcTypeNamespacedName, svcResource)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(svcResource.Spec.Ports).To(ContainElement(v1.ServicePort{
 				Name:       resourceName,

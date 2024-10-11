@@ -1,9 +1,9 @@
-# UnDyingProxy is a UDP forwarder for Kubernetes
+# UnDyingProxy is a TCP/UDP forwarder for Kubernetes
 
 ## Why?
-Cloud Loadbalancers can be expensive. This operator forwards UDP traffic from a single IP and many ports, to many destinations, one destination per source port for now. It is designed to be run as multiple replicas to provide high availability.
+Cloud Loadbalancers can be expensive. This operator forwards TCP and UDP traffic from a single IP and many ports, to many destinations, one destination per source port for now. It is designed to be run as multiple replicas to provide high availability.
 
-Each `UnDyingProxy` object specifies one listen port, and one target host and port to forward to. E.G.
+Each `UnDyingProxy` object specifies one listen port and one target host and port to forward to each, for TCP and UDP. E.G.
 ```yaml
 ---
 apiVersion: proxy.sfact.io/v1alpha1
@@ -14,9 +14,14 @@ metadata:
   labels:
     app: undying-proxy
 spec:
-  listenPort: 1234
-  targetPort: 1234
-  targetHost: my-app.example.svc.cluster.local
+  tcp:
+    listenPort: 1234
+    targetPort: 1234
+    targetHost: my-app.example.svc.cluster.local
+  udp:
+    listenPort: 1234
+    targetPort: 1234
+    targetHost: my-app.example.svc.cluster.local
 ```
 
 This supports only paying for one Loadbalancer, or even avoiding a cloud Loadbalancer altogether. If using a cloud LoadBalancer, this operator can automatically add/remove `Ports` in a `Service` object as `UnDyingProxy` objects are created/destroyed, to open/close the ports in the LoadBalancer.
@@ -39,6 +44,7 @@ Use `config/manager` as example configs to customize.
 - TODO test if recording these metrics slows things down or not
 - TODO also mutex might be slowing it down too much
 - TODO consider trying atomic like described here: https://stackoverflow.com/a/57963829/2971199
+- TODO do logging in a more consistent way
 
 ## Getting Started
 

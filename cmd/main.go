@@ -60,7 +60,9 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
-	var svcToManage string
+	var tcpSvcToManage string
+	var udpSvcToManage string
+	var udpBufferBytes int
 	flag.StringVar(&operatorNamespace, "operator-namespace", "", "The Kubernetes Namespace in which to watch for UnDyingProxy objects.")
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -69,7 +71,9 @@ func main() {
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
-	flag.StringVar(&svcToManage, "service-to-manage", "undying-proxy", "A Kubernetes Service Object to manage, adding/removing listenPorts, in order to expose this app to traffic for the UnDyingProxies. Service must preexist. Set to blank to disable this feature and manage the Service yourself.")
+	flag.StringVar(&tcpSvcToManage, "tcp-service-to-manage", "undying-proxy-tcp", "A Kubernetes Service Object to manage for TCP, adding/removing listenPorts, in order to expose this app to traffic for the UnDyingProxies. Service must preexist. Set to blank to disable this feature and manage the Service yourself.")
+	flag.StringVar(&udpSvcToManage, "udp-service-to-manage", "undying-proxy-udp", "A Kubernetes Service Object to manage for UDP, adding/removing listenPorts, in order to expose this app to traffic for the UnDyingProxies. Service must preexist. Set to blank to disable this feature and manage the Service yourself.")
+	flag.IntVar(&udpBufferBytes, "udp-buffer-bytes", 1024, "The size of the buffer for UDP packets.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -145,9 +149,11 @@ func main() {
 	}
 
 	if err = (&controller.UnDyingProxyReconciler{
-		Client:          mgr.GetClient(),
-		Scheme:          mgr.GetScheme(),
-		ServiceToManage: svcToManage,
+		Client:             mgr.GetClient(),
+		Scheme:             mgr.GetScheme(),
+		UDPServiceToManage: udpSvcToManage,
+		TCPServiceToManage: tcpSvcToManage,
+		UDPBufferBytes:     udpBufferBytes,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "UnDyingProxy")
 		os.Exit(1)
