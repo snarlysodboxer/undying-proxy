@@ -7,6 +7,11 @@ metadata:
   labels:
     app: undying-proxy
 spec:
-  listenPort: 1234
-  targetPort: 1234
-  targetHost: my-app.example.svc.cluster.local
+  tcp:
+    listenPort: 1234
+    targetPort: 1234
+    targetHost: my-app.example.svc.cluster.local
+  udp:
+    listenPort: 1234
+    targetPort: 1234
+    targetHost: my-app.example.svc.cluster.local

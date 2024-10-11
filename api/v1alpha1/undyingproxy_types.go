@@ -20,9 +20,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// UnDyingProxySpec defines the desired state of UnDyingProxy
-type UnDyingProxySpec struct {
-	// TODO make these immutable
+// UDP defines a UDP port forwarder
+type UDP struct {
 	// ListenPort is the port to listen on
 	ListenPort int `json:"listenPort"`
 	// TargetPort is the port to forward to
@@ -31,6 +30,23 @@ type UnDyingProxySpec struct {
 	TargetHost string `json:"targetHost"`
 	// TargetReadTimeoutSeconds is the timeout for reading from the target. defaults to 30 seconds
 	TargetReadTimeoutSeconds int `json:"targetReadTimeout,omitempty"`
+}
+
+// TCP defines a TCP port forwarder
+type TCP struct {
+	// ListenPort is the port to listen on
+	ListenPort int `json:"listenPort"`
+	// TargetPort is the port to forward to
+	TargetPort int `json:"targetPort"`
+	// TargetHost is the address to forward to, IP or DNS resolvable name
+	TargetHost string `json:"targetHost"`
+}
+
+// UnDyingProxySpec defines the desired state of UnDyingProxy
+type UnDyingProxySpec struct {
+	// TODO make these immutable?, better yet, support mutability
+	UDP *UDP `json:"udp,omitempty"`
+	TCP *TCP `json:"tcp,omitempty"`
 }
 
 // UnDyingProxyStatus defines the observed state of UnDyingProxy
@@ -42,7 +58,8 @@ type UnDyingProxyStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Ready",type="boolean",JSONPath=`.status.ready`
-// +kubebuilder:printcolumn:name="ListenPort",type="number",JSONPath=`.spec.listenPort`
+// +kubebuilder:printcolumn:name="ListenUDP",type="number",JSONPath=`.spec.udp.listenPort`
+// +kubebuilder:printcolumn:name="ListenTCP",type="number",JSONPath=`.spec.tcp.listenPort`
 
 // UnDyingProxy is the Schema for the undyingproxies API
 type UnDyingProxy struct {

@@ -49,11 +49,16 @@ var cfg *rest.Config
 var k8sClient client.Client
 var testEnv *envtest.Environment
 
-const svcToManage = "undying-proxy"
+const tcpSvcToManage = "undying-proxy-tcp"
+const udpSvcToManage = "undying-proxy-udp"
 const namespace = "default"
 
-var svcTypeNamespacedName = types.NamespacedName{
-	Name:      svcToManage,
+var tcpSvcTypeNamespacedName = types.NamespacedName{
+	Name:      tcpSvcToManage,
+	Namespace: namespace,
+}
+var udpSvcTypeNamespacedName = types.NamespacedName{
+	Name:      udpSvcToManage,
 	Namespace: namespace,
 }
 
@@ -95,16 +100,39 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
 
-	// Create a Service to manage
+	// Create the Services to manage
 	ctx := context.Background()
 	service := &v1.Service{}
 
-	By("creating the Service to manage")
-	err = k8sClient.Get(ctx, svcTypeNamespacedName, service)
+	By("creating the TCP Service to manage")
+	err = k8sClient.Get(ctx, tcpSvcTypeNamespacedName, service)
 	if err != nil && errors.IsNotFound(err) {
 		resource := &v1.Service{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      svcToManage,
+				Name:      tcpSvcToManage,
+				Namespace: namespace,
+			},
+			Spec: v1.ServiceSpec{
+				Ports: []v1.ServicePort{
+					{
+						// only here to pass validation
+						Name:       "any-port",
+						Port:       5000,
+						TargetPort: intstr.FromInt(5000),
+						Protocol:   v1.ProtocolTCP,
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+	}
+
+	By("creating the UDP Service to manage")
+	err = k8sClient.Get(ctx, udpSvcTypeNamespacedName, service)
+	if err != nil && errors.IsNotFound(err) {
+		resource := &v1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      udpSvcToManage,
 				Namespace: namespace,
 			},
 			Spec: v1.ServiceSpec{
@@ -125,12 +153,22 @@ var _ = BeforeSuite(func() {
 
 var _ = AfterSuite(func() {
 	ctx := context.Background()
-	svcResource := &v1.Service{}
-	err := k8sClient.Get(ctx, svcTypeNamespacedName, svcResource)
+
+	// TCP svc
+	tcpSvcResource := &v1.Service{}
+	err := k8sClient.Get(ctx, tcpSvcTypeNamespacedName, tcpSvcResource)
 	Expect(err).NotTo(HaveOccurred())
 
-	By("Cleanup the Service to manage")
-	Expect(k8sClient.Delete(ctx, svcResource)).To(Succeed())
+	By("Cleanup the TCP Service to manage")
+	Expect(k8sClient.Delete(ctx, tcpSvcResource)).To(Succeed())
+
+	// UDP svc
+	udpSvcResource := &v1.Service{}
+	err = k8sClient.Get(ctx, udpSvcTypeNamespacedName, udpSvcResource)
+	Expect(err).NotTo(HaveOccurred())
+
+	By("Cleanup the UDP Service to manage")
+	Expect(k8sClient.Delete(ctx, udpSvcResource)).To(Succeed())
 
 	By("tearing down the test environment")
 	err = testEnv.Stop()

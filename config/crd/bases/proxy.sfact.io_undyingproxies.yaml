@@ -18,8 +18,11 @@ spec:
     - jsonPath: .status.ready
       name: Ready
       type: boolean
-    - jsonPath: .spec.listenPort
-      name: ListenPort
+    - jsonPath: .spec.udp.listenPort
+      name: ListenUDP
+      type: number
+    - jsonPath: .spec.tcp.listenPort
+      name: ListenTCP
       type: number
     name: v1alpha1
     schema:
@@ -46,26 +49,46 @@ spec:
           spec:
             description: UnDyingProxySpec defines the desired state of UnDyingProxy
             properties:
-              listenPort:
-                description: |-
-                  TODO make these immutable
-                  ListenPort is the port to listen on
-                type: integer
-              targetHost:
-                description: TargetHost is the address to forward to, IP or DNS resolvable
-                  name
-                type: string
-              targetPort:
-                description: TargetPort is the port to forward to
-                type: integer
-              targetReadTimeout:
-                description: TargetReadTimeoutSeconds is the timeout for reading from
-                  the target. defaults to 30 seconds
-                type: integer
-            required:
-            - listenPort
-            - targetHost
-            - targetPort
+              tcp:
+                description: TCP defines a TCP port forwarder
+                properties:
+                  listenPort:
+                    description: ListenPort is the port to listen on
+                    type: integer
+                  targetHost:
+                    description: TargetHost is the address to forward to, IP or DNS
+                      resolvable name
+                    type: string
+                  targetPort:
+                    description: TargetPort is the port to forward to
+                    type: integer
+                required:
+                - listenPort
+                - targetHost
+                - targetPort
+                type: object
+              udp:
+                description: TODO make these immutable?, better yet, support mutability
+                properties:
+                  listenPort:
+                    description: ListenPort is the port to listen on
+                    type: integer
+                  targetHost:
+                    description: TargetHost is the address to forward to, IP or DNS
+                      resolvable name
+                    type: string
+                  targetPort:
+                    description: TargetPort is the port to forward to
+                    type: integer
+                  targetReadTimeout:
+                    description: TargetReadTimeoutSeconds is the timeout for reading
+                      from the target. defaults to 30 seconds
+                    type: integer
+                required:
+                - listenPort
+                - targetHost
+                - targetPort
+                type: object
             type: object
           status:
             description: UnDyingProxyStatus defines the observed state of UnDyingProxy

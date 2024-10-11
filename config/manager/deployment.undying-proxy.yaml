@@ -35,7 +35,8 @@ spec:
         - /manager
         args:
         - --operator-namespace=$(OPERATOR_NAMESPACE)
-        - --service-to-manage=undying-proxy  # this is default
+        - --tcp-service-to-manage=undying-proxy-tcp  # this is default
+        - --udp-service-to-manage=undying-proxy-udp  # this is default
         - --metrics-bind-address=:8080
         - --health-probe-bind-address=:8081
         - --zap-devel=true  # set to false to prevent logging of normal conditions
