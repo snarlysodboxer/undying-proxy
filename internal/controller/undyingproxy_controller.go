@@ -142,6 +142,7 @@ type UnDyingProxyReconciler struct {
 	UDPServiceToManage string
 	TCPServiceToManage string
 	UDPBufferBytes     int
+	gLog               logr.Logger
 }
 
 // TCPForwarder tracks the TCP listener for an UnDyingProxy
@@ -199,7 +200,8 @@ func init() {
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 func (r *UnDyingProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	gLog := log.FromContext(ctx)
+	r.gLog = log.FromContext(ctx)
+	gLog := r.gLog
 
 	// get UnDyingProxy object
 	unDyingProxy := &proxyv1alpha1.UnDyingProxy{}
@@ -218,231 +220,34 @@ func (r *UnDyingProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// Handle the UnDyingProxy being deleted
-	if !unDyingProxy.ObjectMeta.DeletionTimestamp.IsZero() {
-		// Handle the rare case where it's being deleted but the finalizer is not present
-		if !controllerutil.ContainsFinalizer(unDyingProxy, finalizerName) {
-			// end reconciliation
-			return ctrl.Result{}, nil
-		}
-
-		// Confirm that the UnDyingProxy still exists
-		err := r.Get(ctx, req.NamespacedName, unDyingProxy)
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				return ctrl.Result{}, nil
-			}
-			forwardingErrorsTotal.WithLabelValues("FailedFetch").Inc()
-			return ctrl.Result{}, err
-		}
-
-		gLog.V(1).Info("UnDyingProxy is being deleted, performing Finalizer Operations")
-
-		// TCP
-		if unDyingProxy.Spec.TCP != nil {
-			fLog := gLog.WithValues("protocol", "TCP")
-			// ensure shutdown of the forwarder
-			tcpForwardersMux.Lock()
-			forwarder, ok := tcpForwarders[unDyingProxy.Name]
-			tcpForwardersMux.Unlock()
-			if !ok {
-				fLog.V(1).Info("Forwarder is already stopped")
-			} else {
-				// stop clients-to-target (listener) goroutine
-				forwarder.listener.Close()
-				forwarder.closeChan <- struct{}{}
-				fLog.V(1).Info("Forwarder is now stopped")
-			}
-
-			// Optionally manage the Kubernetes Service
-			if r.TCPServiceToManage != "" {
-				fLog = fLog.WithValues("Service.Name", r.TCPServiceToManage)
-				if err := r.cleanupServiceForUnDyingProxy(
-					ctx,
-					fLog,
-					unDyingProxy.Name,
-					r.TCPServiceToManage,
-					unDyingProxy.Namespace,
-					unDyingProxy.Spec.TCP.ListenPort,
-				); err != nil {
-					fLog.Error(err, "Failed to cleanup Service for UnDyingProxy")
-					forwardingErrorsTotal.WithLabelValues("FailedServiceCleanup").Inc()
-					return ctrl.Result{}, err
-				}
-				fLog.V(1).Info("Service for UnDyingProxy is now cleaned up")
-			}
-		}
-
-		// UDP
-		if unDyingProxy.Spec.UDP != nil {
-			fLog := gLog.WithValues("protocol", "UDP")
-			// ensure shutdown of the forwarder
-			udpForwardersMux.Lock()
-			forwarder, ok := udpForwarders[unDyingProxy.Name]
-			udpForwardersMux.Unlock()
-			if !ok {
-				fLog.V(1).Info("Forwarder is already stopped")
-			} else {
-				// stop clients-to-target (listener) goroutine
-				go func() {
-					forwarder.listenerConnection.Close()
-					forwarder.closeChan <- struct{}{}
-					fLog.V(1).Info("Forwarder is now stopped")
-				}()
-			}
-
-			// Optionally manage the Kubernetes Service
-			if r.UDPServiceToManage != "" {
-				if err := r.cleanupServiceForUnDyingProxy(
-					ctx,
-					fLog,
-					unDyingProxy.Name,
-					r.UDPServiceToManage,
-					unDyingProxy.Namespace,
-					unDyingProxy.Spec.UDP.ListenPort,
-				); err != nil {
-					fLog.Error(err, "Failed to cleanup Service for UnDyingProxy")
-					forwardingErrorsTotal.WithLabelValues("FailedServiceCleanup").Inc()
-					return ctrl.Result{}, err
-				}
-				fLog.V(1).Info("Service for UnDyingProxy is now cleaned up")
-			}
-		}
-
-		// Remove the finalizer
-		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
-			if err := r.Get(ctx, req.NamespacedName, unDyingProxy); err != nil {
-				// ignore not found errors
-				if apierrors.IsNotFound(err) {
-					return nil
-				}
-				return err
-			}
-			if ok := controllerutil.RemoveFinalizer(unDyingProxy, finalizerName); !ok {
-				// finalizer already removed
-				return nil
-			}
-			err := r.Update(ctx, unDyingProxy)
-			// ignore not found errors
-			if err != nil && apierrors.IsNotFound(err) {
-				return nil
-			}
-			return err
-		})
-		if err != nil {
-			forwardingErrorsTotal.WithLabelValues("FailedRemoveFinalizer").Inc()
-			gLog.Error(err, "Failed to remove finalizer")
-			return ctrl.Result{}, err
-		}
-
-		// end reconciliation
-		return ctrl.Result{}, nil
+	doReturn, result, err := r.handleDeletion(ctx, req, unDyingProxy)
+	if err != nil || doReturn {
+		return result, err
 	}
 
-	// Add the finalizer if it doesn't exist
-	if unDyingProxy.GetDeletionTimestamp().IsZero() &&
-		!controllerutil.ContainsFinalizer(unDyingProxy, finalizerName) {
-		err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-			if err := r.Get(ctx, req.NamespacedName, unDyingProxy); err != nil {
-				return err
-			}
-			// AddFinalizer only adds the finalizer if it doesn't already exist
-			if added := controllerutil.AddFinalizer(unDyingProxy, finalizerName); added {
-				return r.Update(ctx, unDyingProxy)
-			}
-			return nil
-		})
-		if err != nil {
-			forwardingErrorsTotal.WithLabelValues("FailedAddFinalizer").Inc()
-			gLog.Error(err, "Failed to add finalizer")
-			return ctrl.Result{}, err
-		}
-
+	// Handle finalizer
+	doReturn, result, err = r.handleFinalizer(ctx, req, unDyingProxy)
+	if err != nil || doReturn {
+		return result, err
 	}
 
-	// TCP
-	if unDyingProxy.Spec.TCP != nil {
-		// Setup the TCP Proxy if not already
-		tcpForwardersMux.Lock()
-		_, ok := tcpForwarders[unDyingProxy.Name]
-		tcpForwardersMux.Unlock()
-		if ok {
-			gLog.V(1).Info("Forwarder already running")
-		} else {
-			forwarder, err := setupTCPForwarder(unDyingProxy)
-			if err != nil {
-				forwardingErrorsTotal.WithLabelValues("FailedSetupForwarder").Inc()
-				gLog.Error(err, "Failed to setup TCP Forwarder")
-				return ctrl.Result{}, err
-			}
-			gLog.V(1).Info("TCP Forwarder is now running")
-			tcpForwardersMux.Lock()
-			tcpForwarders[unDyingProxy.Name] = forwarder
-			tcpForwardersMux.Unlock()
-		}
-
-		// Optionally manage the Kubernetes Service
-		if r.TCPServiceToManage != "" {
-			if err := r.manageServiceForUnDyingProxy(
-				ctx,
-				gLog,
-				unDyingProxy.Name,
-				r.TCPServiceToManage,
-				unDyingProxy.Namespace,
-				unDyingProxy.Spec.TCP.ListenPort,
-				v1.ProtocolTCP,
-			); err != nil {
-				forwardingErrorsTotal.WithLabelValues("FailedManageService").Inc()
-				gLog.Error(err, "Failed to manage Service for UnDyingProxy")
-				return ctrl.Result{}, err
-			}
-		}
+	// Handle TCP
+	doReturn, result, err = r.handleTCP(ctx, unDyingProxy)
+	if err != nil || doReturn {
+		return result, err
 	}
 
-	// UDP
-	if unDyingProxy.Spec.UDP != nil {
-		// Setup the UDP Proxy if not already
-		udpForwardersMux.Lock()
-		_, ok := udpForwarders[unDyingProxy.Name]
-		udpForwardersMux.Unlock()
-		if ok {
-			gLog.V(1).Info("Forwarder already running")
-		} else {
-			forwarder, err := setupUDPForwarder(unDyingProxy)
-			if err != nil {
-				forwardingErrorsTotal.WithLabelValues("FailedSetupForwarder").Inc()
-				gLog.Error(err, "Failed to setup UDP Forwarder")
-				return ctrl.Result{}, err
-			}
-			// TODO log better between UDP and TCP
-			gLog.V(1).Info("UDP Forwarder is now running")
-			udpForwardersMux.Lock()
-			udpForwarders[unDyingProxy.Name] = forwarder
-			udpForwardersMux.Unlock()
-		}
-
-		// Optionally manage the Kubernetes Service
-		if r.UDPServiceToManage != "" {
-			if err := r.manageServiceForUnDyingProxy(
-				ctx,
-				gLog,
-				unDyingProxy.Name,
-				r.UDPServiceToManage,
-				unDyingProxy.Namespace,
-				unDyingProxy.Spec.UDP.ListenPort,
-				v1.ProtocolUDP,
-			); err != nil {
-				forwardingErrorsTotal.WithLabelValues("FailedManageService").Inc()
-				gLog.Error(err, "Failed to manage Service for UnDyingProxy")
-				return ctrl.Result{}, err
-			}
-		}
+	// Handle UDP
+	doReturn, result, err = r.handleUDP(ctx, unDyingProxy)
+	if err != nil || doReturn {
+		return result, err
 	}
 
 	// Set the ready status if it's not already
 	if unDyingProxy.Status.Ready {
 		return ctrl.Result{}, nil
 	}
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		if err := r.Get(ctx, req.NamespacedName, unDyingProxy); err != nil {
 			return err
 		}
@@ -456,6 +261,271 @@ func (r *UnDyingProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// handleDeletion handles the deletion of an UnDyingProxy
+func (r *UnDyingProxyReconciler) handleDeletion(
+	ctx context.Context,
+	req ctrl.Request,
+	unDyingProxy *proxyv1alpha1.UnDyingProxy,
+) (bool, ctrl.Result, error) {
+	if unDyingProxy.ObjectMeta.DeletionTimestamp.IsZero() {
+		// continue reconciliation
+		return false, ctrl.Result{}, nil
+	}
+
+	// Handle the rare case where it's being deleted but the finalizer is not present
+	if !controllerutil.ContainsFinalizer(unDyingProxy, finalizerName) {
+		// end reconciliation
+		return true, ctrl.Result{}, nil
+	}
+
+	// Confirm that the UnDyingProxy still exists
+	err := r.Get(ctx, req.NamespacedName, unDyingProxy)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// end reconciliation
+			return true, ctrl.Result{}, nil
+		}
+		forwardingErrorsTotal.WithLabelValues("FailedFetch").Inc()
+		return true, ctrl.Result{}, err
+	}
+
+	r.gLog.V(1).Info("UnDyingProxy is being deleted, performing Finalizer Operations")
+
+	// TCP
+	if unDyingProxy.Spec.TCP != nil {
+		fLog := r.gLog.WithValues("protocol", "TCP")
+		// ensure shutdown of the forwarder
+		tcpForwardersMux.Lock()
+		forwarder, ok := tcpForwarders[unDyingProxy.Name]
+		tcpForwardersMux.Unlock()
+		if !ok {
+			fLog.V(1).Info("Forwarder is already stopped")
+		} else {
+			// stop clients-to-target (listener) goroutine
+			forwarder.listener.Close()
+			forwarder.closeChan <- struct{}{}
+			fLog.V(1).Info("Forwarder is now stopped")
+		}
+
+		// Optionally manage the Kubernetes Service
+		if r.TCPServiceToManage != "" {
+			fLog = fLog.WithValues("Service.Name", r.TCPServiceToManage)
+			if err := r.cleanupServiceForUnDyingProxy(
+				ctx,
+				fLog,
+				unDyingProxy.Name,
+				r.TCPServiceToManage,
+				unDyingProxy.Namespace,
+				unDyingProxy.Spec.TCP.ListenPort,
+			); err != nil {
+				fLog.Error(err, "Failed to cleanup Service for UnDyingProxy")
+				forwardingErrorsTotal.WithLabelValues("FailedServiceCleanup").Inc()
+				return true, ctrl.Result{}, err
+			}
+			fLog.V(1).Info("Service for UnDyingProxy is now cleaned up")
+		}
+	}
+
+	// UDP
+	if unDyingProxy.Spec.UDP != nil {
+		fLog := r.gLog.WithValues("protocol", "UDP")
+		// ensure shutdown of the forwarder
+		udpForwardersMux.Lock()
+		forwarder, ok := udpForwarders[unDyingProxy.Name]
+		udpForwardersMux.Unlock()
+		if !ok {
+			fLog.V(1).Info("Forwarder is already stopped")
+		} else {
+			// stop clients-to-target (listener) goroutine
+			go func() {
+				forwarder.listenerConnection.Close()
+				forwarder.closeChan <- struct{}{}
+				fLog.V(1).Info("Forwarder is now stopped")
+			}()
+		}
+
+		// Optionally manage the Kubernetes Service
+		if r.UDPServiceToManage != "" {
+			if err := r.cleanupServiceForUnDyingProxy(
+				ctx,
+				fLog,
+				unDyingProxy.Name,
+				r.UDPServiceToManage,
+				unDyingProxy.Namespace,
+				unDyingProxy.Spec.UDP.ListenPort,
+			); err != nil {
+				fLog.Error(err, "Failed to cleanup Service for UnDyingProxy")
+				forwardingErrorsTotal.WithLabelValues("FailedServiceCleanup").Inc()
+				return true, ctrl.Result{}, err
+			}
+			fLog.V(1).Info("Service for UnDyingProxy is now cleaned up")
+		}
+	}
+
+	// Remove the finalizer
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := r.Get(ctx, req.NamespacedName, unDyingProxy); err != nil {
+			// ignore not found errors
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
+			return err
+		}
+		if ok := controllerutil.RemoveFinalizer(unDyingProxy, finalizerName); !ok {
+			// finalizer already removed
+			return nil
+		}
+		err := r.Update(ctx, unDyingProxy)
+		// ignore not found errors
+		if err != nil && apierrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	})
+	if err != nil {
+		forwardingErrorsTotal.WithLabelValues("FailedRemoveFinalizer").Inc()
+		r.gLog.Error(err, "Failed to remove finalizer")
+		return true, ctrl.Result{}, err
+	}
+
+	// end reconciliation
+	return true, ctrl.Result{}, nil
+}
+
+// handleFinalizer handles setting the finalizer for an UnDyingProxy
+func (r *UnDyingProxyReconciler) handleFinalizer(
+	ctx context.Context,
+	req ctrl.Request,
+	unDyingProxy *proxyv1alpha1.UnDyingProxy,
+) (bool, ctrl.Result, error) {
+	gLog := r.gLog
+	if controllerutil.ContainsFinalizer(unDyingProxy, finalizerName) {
+		// already has finalizer
+		// continue reconciliation
+		return false, ctrl.Result{}, nil
+	}
+
+	// Add the finalizer
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := r.Get(ctx, req.NamespacedName, unDyingProxy); err != nil {
+			return err
+		}
+		// AddFinalizer only adds the finalizer if it doesn't already exist
+		if added := controllerutil.AddFinalizer(unDyingProxy, finalizerName); added {
+			return r.Update(ctx, unDyingProxy)
+		}
+		return nil
+	})
+	if err != nil {
+		forwardingErrorsTotal.WithLabelValues("FailedAddFinalizer").Inc()
+		gLog.Error(err, "Failed to add finalizer")
+		return true, ctrl.Result{}, err
+	}
+
+	// continue reconciliation
+	return false, ctrl.Result{}, nil
+}
+
+// handleTCP handles the TCP configuration for an UnDyingProxy
+func (r *UnDyingProxyReconciler) handleTCP(
+	ctx context.Context,
+	unDyingProxy *proxyv1alpha1.UnDyingProxy,
+) (bool, ctrl.Result, error) {
+	if unDyingProxy.Spec.TCP == nil {
+		// no TCP configuration
+		return false, ctrl.Result{}, nil
+	}
+	tLog := r.gLog.WithValues("protocol", "TCP")
+
+	// Setup the TCP Proxy if not already
+	tcpForwardersMux.Lock()
+	_, ok := tcpForwarders[unDyingProxy.Name]
+	tcpForwardersMux.Unlock()
+	if ok {
+		tLog.V(1).Info("Forwarder already running")
+	} else {
+		forwarder, err := setupTCPForwarder(unDyingProxy)
+		if err != nil {
+			forwardingErrorsTotal.WithLabelValues("FailedSetupForwarder").Inc()
+			tLog.Error(err, "Failed to setup Forwarder")
+			return true, ctrl.Result{}, err
+		}
+		tLog.V(1).Info("Forwarder is now running")
+		tcpForwardersMux.Lock()
+		tcpForwarders[unDyingProxy.Name] = forwarder
+		tcpForwardersMux.Unlock()
+	}
+
+	// Optionally manage the Kubernetes Service
+	if r.TCPServiceToManage != "" {
+		if err := r.manageServiceForUnDyingProxy(
+			ctx,
+			tLog,
+			unDyingProxy.Name,
+			r.TCPServiceToManage,
+			unDyingProxy.Namespace,
+			unDyingProxy.Spec.TCP.ListenPort,
+			v1.ProtocolTCP,
+		); err != nil {
+			forwardingErrorsTotal.WithLabelValues("FailedManageService").Inc()
+			tLog.Error(err, "Failed to manage Service for UnDyingProxy")
+			return true, ctrl.Result{}, err
+		}
+	}
+
+	return false, ctrl.Result{}, nil
+}
+
+// handleUDP handles the UDP configuration for an UnDyingProxy
+func (r *UnDyingProxyReconciler) handleUDP(
+	ctx context.Context,
+	unDyingProxy *proxyv1alpha1.UnDyingProxy,
+) (bool, ctrl.Result, error) {
+	if unDyingProxy.Spec.UDP == nil {
+		// no UDP configuration
+		return false, ctrl.Result{}, nil
+	}
+	uLog := r.gLog.WithValues("protocol", "UDP")
+
+	// Setup the UDP Proxy if not already
+	udpForwardersMux.Lock()
+	_, ok := udpForwarders[unDyingProxy.Name]
+	udpForwardersMux.Unlock()
+	if ok {
+		uLog.V(1).Info("Forwarder already running")
+	} else {
+		forwarder, err := setupUDPForwarder(unDyingProxy)
+		if err != nil {
+			forwardingErrorsTotal.WithLabelValues("FailedSetupForwarder").Inc()
+			uLog.Error(err, "Failed to setup Forwarder")
+			return true, ctrl.Result{}, err
+		}
+		uLog.V(1).Info("Forwarder is now running")
+		udpForwardersMux.Lock()
+		udpForwarders[unDyingProxy.Name] = forwarder
+		udpForwardersMux.Unlock()
+	}
+
+	// Optionally manage the Kubernetes Service
+	if r.UDPServiceToManage != "" {
+		if err := r.manageServiceForUnDyingProxy(
+			ctx,
+			uLog,
+			unDyingProxy.Name,
+			r.UDPServiceToManage,
+			unDyingProxy.Namespace,
+			unDyingProxy.Spec.UDP.ListenPort,
+			v1.ProtocolUDP,
+		); err != nil {
+			forwardingErrorsTotal.WithLabelValues("FailedManageService").Inc()
+			uLog.Error(err, "Failed to manage Service for UnDyingProxy")
+			return true, ctrl.Result{}, err
+		}
+	}
+
+	return false, ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
