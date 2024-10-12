@@ -86,6 +86,7 @@ var _ = Describe("UnDyingProxy Controller", func() {
 				Scheme:             k8sClient.Scheme(),
 				TCPServiceToManage: "undying-proxy-tcp",
 				UDPServiceToManage: "undying-proxy-udp",
+				UDPBufferBytes:     1024,
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
