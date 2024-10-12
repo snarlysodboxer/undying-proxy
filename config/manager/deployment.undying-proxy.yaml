@@ -40,6 +40,7 @@ spec:
         - --metrics-bind-address=:8080
         - --health-probe-bind-address=:8081
         - --zap-devel=true  # set to false to prevent logging of normal conditions
+        - --zap-stacktrace-level=panic  # at which level to trace. `info`, `error`, `panic`.
         env:
         # tell the operator which namespace to watch for UnDyingProxy objects
         - name: OPERATOR_NAMESPACE

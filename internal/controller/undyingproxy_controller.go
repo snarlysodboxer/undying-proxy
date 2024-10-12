@@ -126,9 +126,17 @@ var (
 		[]string{"type"},
 	)
 
-	forwardingErrorsTotal = prometheus.NewCounterVec(
+	tcpForwardingErrorsTotalM = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "undying_proxy_forwarding_errors_total",
+			Name: "undying_proxy_tcp_forwarding_errors_total",
+			Help: "Number of networking-related forwarding errors encountered by the UnDyingProxy controller",
+		},
+		[]string{"type"},
+	)
+
+	udpForwardingErrorsTotalM = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "undying_proxy_udp_forwarding_errors_total",
 			Help: "Number of networking-related forwarding errors encountered by the UnDyingProxy controller",
 		},
 		[]string{"type"},
@@ -187,7 +195,7 @@ func init() {
 		udpClientsConnectedM,
 		udpFromClientsToTargetBytesTotalM,
 		udpFromTargetToClientsBytesTotalM,
-		forwardingErrorsTotal,
+		tcpForwardingErrorsTotalM,
 	)
 }
 
@@ -214,7 +222,7 @@ func (r *UnDyingProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			return ctrl.Result{}, nil
 		}
 
-		forwardingErrorsTotal.WithLabelValues("FailedFetch").Inc()
+		operatorErrorsTotalM.WithLabelValues("FailedFetch").Inc()
 		gLog.Error(err, "Failed to fetch UnDyingProxy")
 		return ctrl.Result{}, err
 	}
@@ -238,6 +246,9 @@ func (r *UnDyingProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// Handle UDP
+	if r.UDPBufferBytes == 0 {
+		return ctrl.Result{}, errors.New("UDPBufferBytes must be set")
+	}
 	doReturn, result, err = r.handleUDP(ctx, unDyingProxy)
 	if err != nil || doReturn {
 		return result, err
@@ -255,7 +266,7 @@ func (r *UnDyingProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return r.Status().Update(ctx, unDyingProxy)
 	})
 	if err != nil {
-		forwardingErrorsTotal.WithLabelValues("FailedUpdateStatus").Inc()
+		operatorErrorsTotalM.WithLabelValues("FailedUpdateStatus").Inc()
 		gLog.Error(err, "Failed to update status")
 		return ctrl.Result{}, err
 	}
@@ -287,7 +298,7 @@ func (r *UnDyingProxyReconciler) handleDeletion(
 			// end reconciliation
 			return true, ctrl.Result{}, nil
 		}
-		forwardingErrorsTotal.WithLabelValues("FailedFetch").Inc()
+		operatorErrorsTotalM.WithLabelValues("FailedFetch").Inc()
 		return true, ctrl.Result{}, err
 	}
 
@@ -321,7 +332,7 @@ func (r *UnDyingProxyReconciler) handleDeletion(
 				unDyingProxy.Spec.TCP.ListenPort,
 			); err != nil {
 				fLog.Error(err, "Failed to cleanup Service for UnDyingProxy")
-				forwardingErrorsTotal.WithLabelValues("FailedServiceCleanup").Inc()
+				operatorErrorsTotalM.WithLabelValues("FailedServiceCleanup").Inc()
 				return true, ctrl.Result{}, err
 			}
 			fLog.V(1).Info("Service for UnDyingProxy is now cleaned up")
@@ -357,7 +368,7 @@ func (r *UnDyingProxyReconciler) handleDeletion(
 				unDyingProxy.Spec.UDP.ListenPort,
 			); err != nil {
 				fLog.Error(err, "Failed to cleanup Service for UnDyingProxy")
-				forwardingErrorsTotal.WithLabelValues("FailedServiceCleanup").Inc()
+				operatorErrorsTotalM.WithLabelValues("FailedServiceCleanup").Inc()
 				return true, ctrl.Result{}, err
 			}
 			fLog.V(1).Info("Service for UnDyingProxy is now cleaned up")
@@ -385,7 +396,7 @@ func (r *UnDyingProxyReconciler) handleDeletion(
 		return err
 	})
 	if err != nil {
-		forwardingErrorsTotal.WithLabelValues("FailedRemoveFinalizer").Inc()
+		operatorErrorsTotalM.WithLabelValues("FailedRemoveFinalizer").Inc()
 		r.gLog.Error(err, "Failed to remove finalizer")
 		return true, ctrl.Result{}, err
 	}
@@ -419,7 +430,7 @@ func (r *UnDyingProxyReconciler) handleFinalizer(
 		return nil
 	})
 	if err != nil {
-		forwardingErrorsTotal.WithLabelValues("FailedAddFinalizer").Inc()
+		operatorErrorsTotalM.WithLabelValues("FailedAddFinalizer").Inc()
 		gLog.Error(err, "Failed to add finalizer")
 		return true, ctrl.Result{}, err
 	}
@@ -448,7 +459,7 @@ func (r *UnDyingProxyReconciler) handleTCP(
 	} else {
 		forwarder, err := setupTCPForwarder(unDyingProxy)
 		if err != nil {
-			forwardingErrorsTotal.WithLabelValues("FailedSetupForwarder").Inc()
+			operatorErrorsTotalM.WithLabelValues("FailedSetupForwarder").Inc()
 			tLog.Error(err, "Failed to setup Forwarder")
 			return true, ctrl.Result{}, err
 		}
@@ -469,7 +480,7 @@ func (r *UnDyingProxyReconciler) handleTCP(
 			unDyingProxy.Spec.TCP.ListenPort,
 			v1.ProtocolTCP,
 		); err != nil {
-			forwardingErrorsTotal.WithLabelValues("FailedManageService").Inc()
+			operatorErrorsTotalM.WithLabelValues("FailedManageService").Inc()
 			tLog.Error(err, "Failed to manage Service for UnDyingProxy")
 			return true, ctrl.Result{}, err
 		}
@@ -489,6 +500,10 @@ func (r *UnDyingProxyReconciler) handleUDP(
 	}
 	uLog := r.gLog.WithValues("protocol", "UDP")
 
+	if r.UDPBufferBytes == 0 {
+		return true, ctrl.Result{}, errors.New("UDPBufferBytes must be set")
+	}
+
 	// Setup the UDP Proxy if not already
 	udpForwardersMux.Lock()
 	_, ok := udpForwarders[unDyingProxy.Name]
@@ -496,9 +511,9 @@ func (r *UnDyingProxyReconciler) handleUDP(
 	if ok {
 		uLog.V(1).Info("Forwarder already running")
 	} else {
-		forwarder, err := setupUDPForwarder(unDyingProxy)
+		forwarder, err := setupUDPForwarder(unDyingProxy, r.UDPBufferBytes)
 		if err != nil {
-			forwardingErrorsTotal.WithLabelValues("FailedSetupForwarder").Inc()
+			operatorErrorsTotalM.WithLabelValues("FailedSetupForwarder").Inc()
 			uLog.Error(err, "Failed to setup Forwarder")
 			return true, ctrl.Result{}, err
 		}
@@ -519,10 +534,11 @@ func (r *UnDyingProxyReconciler) handleUDP(
 			unDyingProxy.Spec.UDP.ListenPort,
 			v1.ProtocolUDP,
 		); err != nil {
-			forwardingErrorsTotal.WithLabelValues("FailedManageService").Inc()
+			operatorErrorsTotalM.WithLabelValues("FailedManageService").Inc()
 			uLog.Error(err, "Failed to manage Service for UnDyingProxy")
 			return true, ctrl.Result{}, err
 		}
+		uLog.V(1).Info("Service for UnDyingProxy is up to date")
 	}
 
 	return false, ctrl.Result{}, nil
@@ -582,9 +598,10 @@ func setupTCPForwarder(unDyingProxy *proxyv1alpha1.UnDyingProxy) (*TCPForwarder,
 				if err != nil {
 					// ignore connection closed error
 					if errors.Is(err, net.ErrClosed) {
-						fLog.V(2).Info("ignoring connection closed error")
+						fLog.V(2).Info("Ignoring connection closed error")
 						continue
 					}
+					tcpForwardingErrorsTotalM.WithLabelValues("Accept").Inc()
 					fLog.Error(err, "Failed to Accept on listener")
 					continue
 				}
@@ -598,10 +615,12 @@ func setupTCPForwarder(unDyingProxy *proxyv1alpha1.UnDyingProxy) (*TCPForwarder,
 	return forwarder, nil
 }
 
+// forwardTCPConnections forwards TCP connections from clients to a target server, and back
 func forwardTCPConnections(connToListener net.Conn, targetAddr, forwarderName string, fLog logr.Logger) {
 	// connToTarget represents a connection to the target server
 	connToTarget, err := net.Dial("tcp", targetAddr)
 	if err != nil {
+		tcpForwardingErrorsTotalM.WithLabelValues("DialServerTarget").Inc()
 		fLog.Error(err, "Dial failed")
 		return
 	}
@@ -616,7 +635,8 @@ func forwardTCPConnections(connToListener net.Conn, targetAddr, forwarderName st
 		defer connToListener.Close()
 		numBytesCopied, err := io.Copy(connToTarget, connToListener)
 		if err != nil {
-			fLog.Error(err, "Failed to copy data from client to target")
+			tcpForwardingErrorsTotalM.WithLabelValues("CopyClientToTarget").Inc()
+			fLog.V(2).Error(err, "Failed to copy data from client to target")
 		}
 		tcpFromClientsToTargetBytesTotalM.WithLabelValues(forwarderName).Add(float64(numBytesCopied))
 	}()
@@ -624,30 +644,37 @@ func forwardTCPConnections(connToListener net.Conn, targetAddr, forwarderName st
 	// fromTargetToClient
 	numBytesCopied, err := io.Copy(connToListener, connToTarget)
 	if err != nil {
-		fLog.Error(err, "Failed to copy data from target to client")
+		tcpForwardingErrorsTotalM.WithLabelValues("CopyTargetToClient").Inc()
+		fLog.V(2).Error(err, "Failed to copy data from target to client")
 	}
 	tcpFromTargetToClientsBytesTotalM.WithLabelValues(forwarderName).Add(float64(numBytesCopied))
 }
 
 // setupUDPForwarder sets up a UDP forwarder for an UnDyingProxy
 // Run once per UnDyingProxy
-func setupUDPForwarder(unDyingProxy *proxyv1alpha1.UnDyingProxy) (*UDPForwarder, error) {
+func setupUDPForwarder(
+	unDyingProxy *proxyv1alpha1.UnDyingProxy,
+	udpBufferBytes int,
+) (*UDPForwarder, error) {
 	// TODO re-resolve DNS occasionally
 	// Resolve listen and target addresses
 	addr := fmt.Sprintf(":%d", unDyingProxy.Spec.UDP.ListenPort)
 	listenAddress, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
+		udpForwardingErrorsTotalM.WithLabelValues("ResolveListenAddress").Inc()
 		return nil, fmt.Errorf("Failed to resolve listen address: %w", err)
 	}
 	addr = fmt.Sprintf("%s:%d", unDyingProxy.Spec.UDP.TargetHost, unDyingProxy.Spec.UDP.TargetPort)
 	targetAddress, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
+		udpForwardingErrorsTotalM.WithLabelValues("ResolveTargetAddress").Inc()
 		return nil, fmt.Errorf("Failed to resolve target address: %w", err)
 	}
 
 	// no need to re-initialize the listenerConnection
 	listenerConnection, err := net.ListenUDP("udp", listenAddress)
 	if err != nil {
+		udpForwardingErrorsTotalM.WithLabelValues("Listen").Inc()
 		return nil, fmt.Errorf("Failed to listen on port %d: %w", unDyingProxy.Spec.UDP.ListenPort, err)
 	}
 
@@ -666,6 +693,7 @@ func setupUDPForwarder(unDyingProxy *proxyv1alpha1.UnDyingProxy) (*UDPForwarder,
 		targetReadTimeout:  time.Duration(timeoutSeconds) * time.Second,
 		clients:            make(map[string]*UDPClient),
 		clientsMux:         &sync.Mutex{},
+		udpBufferBytes:     udpBufferBytes,
 	}
 
 	go runUDPClientsForwarder(forwarder)
@@ -722,6 +750,8 @@ func runUDPClientsForwarder(forwarder *UDPForwarder) {
 					targetConnection, err := net.DialUDP("udp", nil, forwarder.targetAddress)
 					if err != nil {
 						fLog.V(1).Error(err, "Error connecting to target")
+						udpForwardingErrorsTotalM.WithLabelValues("DialServer").Inc()
+						// continue sending more packets when the target is down
 						continue
 					}
 
@@ -744,6 +774,7 @@ func runUDPClientsForwarder(forwarder *UDPForwarder) {
 				// TODO set write deadline?
 				numBytesWritten, err := client.targetConnection.Write(data[:numBytesRead])
 				if err != nil {
+					udpForwardingErrorsTotalM.WithLabelValues("WriteToTarget").Inc()
 					// continue sending more packets when the target is down
 					fLog.V(1).Error(err, "Error writing to target")
 					continue
@@ -753,6 +784,7 @@ func runUDPClientsForwarder(forwarder *UDPForwarder) {
 
 				err = client.targetConnection.SetReadDeadline(time.Now().Add(forwarder.targetReadTimeout))
 				if err != nil {
+					udpForwardingErrorsTotalM.WithLabelValues("SetReadDeadlineClientToTarget").Inc()
 					// continue sending more packets
 					fLog.Error(err, "Error setting read deadline")
 					continue
@@ -771,6 +803,7 @@ func runUDPClientsForwarder(forwarder *UDPForwarder) {
 
 				// ignore if listener is closed
 				if !errors.Is(readErr, net.ErrClosed) {
+					udpForwardingErrorsTotalM.WithLabelValues("ReadFromClient").Inc()
 					fLog.V(1).Error(readErr, "Error reading from listener")
 				}
 			}
@@ -807,6 +840,7 @@ func runUDPTargetForwarder(forwarder *UDPForwarder, client *UDPClient) {
 			// set read deadline so this goroutine will eventually shutdown
 			err := client.targetConnection.SetReadDeadline(time.Now().Add(forwarder.targetReadTimeout))
 			if err != nil {
+				udpForwardingErrorsTotalM.WithLabelValues("SetReadDeadlineTargetToClient").Inc()
 				fLog.Error(err, "Error setting read deadline")
 				return
 			}
@@ -817,6 +851,7 @@ func runUDPTargetForwarder(forwarder *UDPForwarder, client *UDPClient) {
 			if numBytesRead > 0 {
 				numBytesWritten, err := forwarder.listenerConnection.WriteToUDP(data[:numBytesRead], client.clientAddress)
 				if err != nil {
+					udpForwardingErrorsTotalM.WithLabelValues("WriteToClient").Inc()
 					fLog.Error(err, "Error writing to client")
 					return
 				}
@@ -829,6 +864,7 @@ func runUDPTargetForwarder(forwarder *UDPForwarder, client *UDPClient) {
 				if netErr, ok := readErr.(net.Error); ok && netErr.Timeout() {
 					return
 				}
+				udpForwardingErrorsTotalM.WithLabelValues("ReadFromTarget").Inc()
 				fLog.Error(readErr, "Error reading from target")
 				return
 			}
@@ -846,6 +882,7 @@ func (r *UnDyingProxyReconciler) manageServiceForUnDyingProxy(
 	protocol v1.Protocol,
 ) error {
 	sLog := gLog.WithValues("Service.Name", serviceName)
+
 	// first check if the Service is already to spec
 	namespacedName := types.NamespacedName{Name: serviceName, Namespace: serviceNamespace}
 	service := &v1.Service{}
