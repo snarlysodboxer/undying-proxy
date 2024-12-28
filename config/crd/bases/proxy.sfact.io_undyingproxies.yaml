@@ -73,6 +73,10 @@ spec:
                   listenPort:
                     description: ListenPort is the port to listen on
                     type: integer
+                  readTimeoutSeconds:
+                    description: ReadTimeoutSeconds is the timeout for reading from
+                      the client and target. Defaults to 30 seconds.
+                    type: integer
                   targetHost:
                     description: TargetHost is the address to forward to, IP or DNS
                       resolvable name
@@ -80,9 +84,9 @@ spec:
                   targetPort:
                     description: TargetPort is the port to forward to
                     type: integer
-                  targetReadTimeout:
-                    description: TargetReadTimeoutSeconds is the timeout for reading
-                      from the target. defaults to 30 seconds
+                  writeTimeoutSeconds:
+                    description: WriteTimeoutSeconds is the timeout for writing to
+                      the client and target. Defaults to 5 seconds.
                     type: integer
                 required:
                 - listenPort

@@ -1,0 +1,64 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: connection-tester
+  namespace: connection-tester
+  labels:
+    app: connection-tester
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: connection-tester
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: connection-tester
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+      - name: udp-server
+        image: my-repo/connection-tester:latest
+        imagePullPolicy: Never
+        command:
+        - /connection-tester
+        args:
+        - udpServer
+        - --listenAddress
+        - ":3001"
+        ports:
+        - name: udp-server
+          containerPort: 3001
+          protocol: UDP
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+      - name: tcp-server
+        image: my-repo/connection-tester:latest
+        imagePullPolicy: Never
+        command:
+        - /connection-tester
+        args:
+        - tcpServer
+        - --listenAddress
+        - ":5001"
+        ports:
+        - name: tcp-server
+          containerPort: 5001
+          protocol: TCP
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi

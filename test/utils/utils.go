@@ -103,11 +103,31 @@ func InstallCertManager() error {
 	return err
 }
 
+// EnsureContext ensures use of the correct context
+func EnsureContext() error {
+	k8sContext := "kind"
+	if value, ok := os.LookupEnv("KIND_CONTEXT"); ok {
+		k8sContext = value
+	}
+
+	cmd := exec.Command("kubectl", "config", "current-context")
+	output, err := Run(cmd)
+	if err != nil {
+		return err
+	}
+	currentContext := strings.TrimSuffix(string(output), "\n")
+	if currentContext != k8sContext {
+		return fmt.Errorf("current context is not %s. Create and/or activate this cluster and context first. E.G. `kind create cluster --name undying-proxy-test`", k8sContext)
+	}
+
+	return nil
+}
+
 // LoadImageToKindCluster loads a local docker image to the kind cluster
 func LoadImageToKindClusterWithName(name string) error {
 	cluster := "kind"
-	if v, ok := os.LookupEnv("KIND_CLUSTER"); ok {
-		cluster = v
+	if value, ok := os.LookupEnv("KIND_CLUSTER"); ok {
+		cluster = value
 	}
 	kindOptions := []string{"load", "docker-image", name, "--name", cluster}
 	cmd := exec.Command("kind", kindOptions...)

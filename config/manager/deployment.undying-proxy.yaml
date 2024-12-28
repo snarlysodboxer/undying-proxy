@@ -57,7 +57,7 @@ spec:
             memory: 64Mi
           limits:
             cpu: 500m
-            memory: 128Mi
+            memory: 256Mi
         livenessProbe:
           periodSeconds: 20
           initialDelaySeconds: 15

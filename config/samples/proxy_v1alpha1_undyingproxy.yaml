@@ -15,3 +15,5 @@ spec:
     listenPort: 1234
     targetPort: 1234
     targetHost: my-app.example.svc.cluster.local
+    readTimeoutSeconds: 30
+    writeTimeoutSeconds: 5
