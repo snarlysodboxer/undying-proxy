@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: undying-proxy
+  name: undying-proxy-udp
   namespace: undying-proxy
   labels:
     app: undying-proxy
@@ -21,4 +21,14 @@ spec:
   - name: any-port
     port: 1234
     targetPort: 1234
+    protocol: UDP
+  # if using a k8s Service backed by a cloud provider's load balancer, instead of using any-port, you may want to set a highest and lowest port out of range, since some providers will interrupt service when changing the range, but not when adding/removing ports within the range, (GCP network LoadBalancers for one.)
+  # the port,
+  - name: lowest-port
+    port: 1235
+    targetPort: 1235
+    protocol: UDP
+  - name: highest-port
+    port: 33333
+    targetPort: 33333
     protocol: UDP

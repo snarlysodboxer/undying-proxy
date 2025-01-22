@@ -1,0 +1,19 @@
+---
+apiVersion: proxy.sfact.io/v1alpha1
+kind: UnDyingProxy
+metadata:
+  name: connection-tester
+  namespace: undying-proxy
+  labels:
+    app: undying-proxy
+spec:
+  tcp:
+    listenPort: 5002
+    targetPort: 5001
+    targetHost: connection-tester.connection-tester.svc.cluster.local
+  udp:
+    listenPort: 3002
+    targetPort: 3001
+    targetHost: connection-tester.connection-tester.svc.cluster.local
+    # readTimeoutSeconds: 5
+    # writeTimeoutSeconds: 1

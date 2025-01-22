@@ -28,8 +28,10 @@ type UDP struct {
 	TargetPort int `json:"targetPort"`
 	// TargetHost is the address to forward to, IP or DNS resolvable name
 	TargetHost string `json:"targetHost"`
-	// TargetReadTimeoutSeconds is the timeout for reading from the target. defaults to 30 seconds
-	TargetReadTimeoutSeconds int `json:"targetReadTimeout,omitempty"`
+	// ReadTimeoutSeconds is the timeout for reading from the client and target. Defaults to 30 seconds.
+	ReadTimeoutSeconds int `json:"readTimeoutSeconds,omitempty"`
+	// WriteTimeoutSeconds is the timeout for writing to the client and target. Defaults to 5 seconds.
+	WriteTimeoutSeconds int `json:"writeTimeoutSeconds,omitempty"`
 }
 
 // TCP defines a TCP port forwarder
