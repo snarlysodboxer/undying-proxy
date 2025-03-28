@@ -48,6 +48,9 @@ const (
 	finalizerName = "undyingproxies.proxy.sfact.io/finalizer"
 )
 
+// ctxLogger is the context key type for the logger
+type ctxLogger struct{}
+
 var (
 	// tcpForwarders is a map of name-to-TCPForwarder to track globally.
 	tcpForwarders = make(map[string]*TCPForwarder)
@@ -149,7 +152,6 @@ type UnDyingProxyReconciler struct {
 	UDPServiceToManage string
 	TCPServiceToManage string
 	UDPBufferBytes     int
-	log                logr.Logger
 }
 
 // TCPForwarder tracks the TCP listener for an UnDyingProxy
@@ -210,8 +212,8 @@ func (r *UnDyingProxyReconciler) Reconcile(
 	ctx context.Context,
 	req ctrl.Request,
 ) (ctrl.Result, error) {
-	r.log = crlog.FromContext(ctx)
-	log := r.log
+	log := crlog.FromContext(ctx)
+	ctx = context.WithValue(ctx, ctxLogger{}, log) // Add logger to context value
 
 	// get UnDyingProxy object
 	unDyingProxy := &proxyv1alpha1.UnDyingProxy{}
@@ -287,6 +289,7 @@ func (r *UnDyingProxyReconciler) handleDeletion(
 	req ctrl.Request,
 	unDyingProxy *proxyv1alpha1.UnDyingProxy,
 ) (bool, ctrl.Result, error) {
+	log := ctx.Value(ctxLogger{}).(logr.Logger)
 	if unDyingProxy.DeletionTimestamp.IsZero() {
 		// continue reconciliation
 		return false, ctrl.Result{}, nil
@@ -309,7 +312,7 @@ func (r *UnDyingProxyReconciler) handleDeletion(
 		return true, ctrl.Result{}, err
 	}
 
-	r.log.V(1).Info("UnDyingProxy is being deleted, performing finalizer operations")
+	log.V(1).Info("UnDyingProxy is being deleted, performing finalizer operations")
 
 	if unDyingProxy.Spec.TCP != nil {
 		doReturn, result, err := r.handleTCPCleanup(ctx, unDyingProxy)
@@ -330,7 +333,7 @@ func (r *UnDyingProxyReconciler) handleDeletion(
 		return doReturn, result, err
 	}
 
-	r.log.V(1).Info("UnDyingProxy deleted, finished finalizer operations")
+	log.V(1).Info("UnDyingProxy deleted, finished finalizer operations")
 
 	// end reconciliation
 	return true, ctrl.Result{}, nil
@@ -340,7 +343,7 @@ func (r *UnDyingProxyReconciler) handleTCPCleanup(
 	ctx context.Context,
 	unDyingProxy *proxyv1alpha1.UnDyingProxy,
 ) (bool, ctrl.Result, error) {
-	log := r.log.WithValues("protocol", "TCP")
+	log := ctx.Value(ctxLogger{}).(logr.Logger).WithValues("protocol", "TCP")
 
 	tcpForwardersMux.Lock()
 	forwarder, ok := tcpForwarders[unDyingProxy.Name]
@@ -375,7 +378,7 @@ func (r *UnDyingProxyReconciler) handleUDPCleanup(
 	ctx context.Context,
 	unDyingProxy *proxyv1alpha1.UnDyingProxy,
 ) (bool, ctrl.Result, error) {
-	log := r.log.WithValues("protocol", "UDP")
+	log := ctx.Value(ctxLogger{}).(logr.Logger).WithValues("protocol", "UDP")
 
 	udpForwardersMux.Lock()
 	forwarder, found := udpForwarders[unDyingProxy.Name]
@@ -409,6 +412,9 @@ func (r *UnDyingProxyReconciler) removeFinalizer(
 	req ctrl.Request,
 	unDyingProxy *proxyv1alpha1.UnDyingProxy,
 ) (bool, ctrl.Result, error) {
+	log := ctx.Value(ctxLogger{}).(logr.Logger)
+	log.V(1).Info("Removing finalizer")
+
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		err := r.Get(ctx, req.NamespacedName, unDyingProxy)
 		if err != nil {
@@ -429,10 +435,12 @@ func (r *UnDyingProxyReconciler) removeFinalizer(
 		return err
 	})
 	if err != nil {
+		log.Error(err, "Failed to remove finalizer")
 		mOperatorErrorsTotal.WithLabelValues("FailedRemoveFinalizer").Inc()
-		r.log.Error(err, "Failed to remove finalizer")
 		return true, ctrl.Result{}, err
 	}
+
+	log.V(1).Info("Removed finalizer")
 
 	return false, ctrl.Result{}, nil
 }
@@ -443,11 +451,12 @@ func (r *UnDyingProxyReconciler) handleFinalizer(
 	req ctrl.Request,
 	unDyingProxy *proxyv1alpha1.UnDyingProxy,
 ) (bool, ctrl.Result, error) {
-	log := r.log
+	log := ctx.Value(ctxLogger{}).(logr.Logger)
 	if controllerutil.ContainsFinalizer(unDyingProxy, finalizerName) {
 		return false, ctrl.Result{}, nil
 	}
 
+	log.V(1).Info("Adding finalizer")
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		if err := r.Get(ctx, req.NamespacedName, unDyingProxy); err != nil {
 			return err
@@ -459,10 +468,11 @@ func (r *UnDyingProxyReconciler) handleFinalizer(
 		return nil
 	})
 	if err != nil {
-		mOperatorErrorsTotal.WithLabelValues("FailedAddFinalizer").Inc()
 		log.Error(err, "Failed to add finalizer")
+		mOperatorErrorsTotal.WithLabelValues("FailedAddFinalizer").Inc()
 		return true, ctrl.Result{}, err
 	}
+	log.V(1).Info("Finalizer added")
 
 	// continue reconciliation
 	return false, ctrl.Result{}, nil
@@ -473,7 +483,7 @@ func (r *UnDyingProxyReconciler) handleTCP(
 	ctx context.Context,
 	unDyingProxy *proxyv1alpha1.UnDyingProxy,
 ) (bool, ctrl.Result, error) {
-	log := r.log.WithValues("protocol", "TCP")
+	log := ctx.Value(ctxLogger{}).(logr.Logger).WithValues("protocol", "TCP")
 
 	tcpForwardersMux.Lock()
 	_, ok := tcpForwarders[unDyingProxy.Name]
@@ -510,7 +520,7 @@ func (r *UnDyingProxyReconciler) handleUDP(
 	ctx context.Context,
 	unDyingProxy *proxyv1alpha1.UnDyingProxy,
 ) (bool, ctrl.Result, error) {
-	log := r.log.WithValues("protocol", "UDP")
+	log := ctx.Value(ctxLogger{}).(logr.Logger).WithValues("protocol", "UDP")
 
 	// TODO move this to object validation
 	if r.UDPBufferBytes == 0 {
@@ -949,7 +959,7 @@ func (r *UnDyingProxyReconciler) manageServiceForUnDyingProxy(
 		serviceName = r.UDPServiceToManage
 		listenPort = unDyingProxy.Spec.UDP.ListenPort
 	}
-	log := r.log.WithValues(
+	log := ctx.Value(ctxLogger{}).(logr.Logger).WithValues(
 		"protocol", protocolStr,
 		"Service.Name", serviceName,
 		"listenPort", listenPort,
@@ -1048,7 +1058,7 @@ func (r *UnDyingProxyReconciler) cleanupServiceForUnDyingProxy(
 		listenPort = unDyingProxy.Spec.UDP.ListenPort
 	}
 
-	log := r.log.WithValues(
+	log := ctx.Value(ctxLogger{}).(logr.Logger).WithValues(
 		"protocol", protocolStr,
 		"Service.Name", serviceName,
 		"listenPort", listenPort,
