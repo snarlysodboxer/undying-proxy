@@ -58,6 +58,7 @@ func main() {
 	var operatorNamespace string
 	var metricsAddr string
 	var probeAddr string
+	var authedMetrics bool
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tcpSvcToManage string
@@ -67,6 +68,8 @@ func main() {
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
+	flag.BoolVar(&authedMetrics, "metrics-authed", true,
+		"If true, the metrics endpoint is behind auth and requires a ClusterRole. See WithAuthenticationAndAuthorization function in the Contorller-Runtime filters package.")
 	flag.BoolVar(&secureMetrics, "metrics-secure", true,
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
@@ -107,11 +110,11 @@ func main() {
 		TLSOpts: tlsOpts,
 	})
 
-	// if secureMetrics is false, disable the WithAuthenticationAndAuthorization filter
 	filter := filters.WithAuthenticationAndAuthorization
-	if !secureMetrics {
+	if !authedMetrics {
 		filter = nil
 	}
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
 		// Restrict to a single Namespace
