@@ -69,7 +69,7 @@ func main() {
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&authedMetrics, "metrics-authed", true,
-		"If true, the metrics endpoint is behind auth and requires a ClusterRole. See WithAuthenticationAndAuthorization function in the Contorller-Runtime filters package.")
+		"If true, the metrics endpoint is behind auth and requires a ClusterRole. See WithAuthenticationAndAuthorization function in the Controller-Runtime filters package.")
 	flag.BoolVar(&secureMetrics, "metrics-secure", true,
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,

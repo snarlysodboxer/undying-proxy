@@ -32,7 +32,9 @@ import (
 )
 
 var (
-	tcpForwarders    = make(map[string]*tcpForwarder)
+	// tcpForwarders maps UnDyingProxy names to their active tcpForwarder instances.
+	tcpForwarders = make(map[string]*tcpForwarder)
+	// tcpForwardersMux protects concurrent access to the tcpForwarders map.
 	tcpForwardersMux = &sync.Mutex{}
 )
 
@@ -44,7 +46,13 @@ type tcpForwarder struct {
 	log       logr.Logger
 }
 
-// handleTCPCleanup stops the TCP forwarder and cleans up related resources
+// handleTCPCleanup stops the TCP forwarder associated with the given UnDyingProxy.
+// It signals the forwarder to close, closes the listener, removes the forwarder
+// from the global map, and triggers the cleanup of the associated Service port.
+// It returns true if the ctrl.Result and error should be returned to the caller,
+// false if the reconciliation should continue.
+//
+//nolint:unparam
 func (r *UnDyingProxyReconciler) handleTCPCleanup(
 	ctx context.Context,
 	unDyingProxy *proxyv1alpha1.UnDyingProxy,
@@ -54,7 +62,7 @@ func (r *UnDyingProxyReconciler) handleTCPCleanup(
 	tcpForwardersMux.Lock()
 	forwarder, ok := tcpForwarders[unDyingProxy.Name]
 	if !ok {
-		log.V(1).Info("TCP Forwarder was already stopped")
+		log.V(2).Info("TCP Forwarder was already stopped")
 	} else {
 		go func() {
 			forwarder.closeChan <- struct{}{}
@@ -63,7 +71,7 @@ func (r *UnDyingProxyReconciler) handleTCPCleanup(
 		if err != nil && !errors.Is(err, net.ErrClosed) {
 			log.Error(err, "Failed to close TCP listener on forwarder shutdown")
 		}
-		log.V(1).Info("TCP Forwarder is now stopped")
+		log.V(2).Info("TCP Forwarder is now stopped")
 	}
 	tcpForwardersMux.Unlock()
 
@@ -74,13 +82,19 @@ func (r *UnDyingProxyReconciler) handleTCPCleanup(
 			mOperatorErrorsTotal.WithLabelValues("FailedServiceCleanup").Inc()
 			return true, ctrl.Result{}, err
 		}
-		log.V(1).Info("Service for UnDyingProxy is now cleaned up")
+		log.V(2).Info("Service for UnDyingProxy is now cleaned up")
 	}
 
 	return false, ctrl.Result{}, nil
 }
 
-// handleTCP handles the TCP configuration for an UnDyingProxy
+// handleTCP ensures the TCP forwarder for the given UnDyingProxy is running.
+// If a forwarder doesn't exist, it calls setupTCPForwarder to create and start one.
+// It also ensures the associated Kubernetes Service port is correctly configured.
+// It returns true if the ctrl.Result and error should be returned to the caller,
+// false if the reconciliation should continue.
+//
+//nolint:unparam
 func (r *UnDyingProxyReconciler) handleTCP(
 	ctx context.Context,
 	unDyingProxy *proxyv1alpha1.UnDyingProxy,
@@ -90,7 +104,7 @@ func (r *UnDyingProxyReconciler) handleTCP(
 	tcpForwardersMux.Lock()
 	_, ok := tcpForwarders[unDyingProxy.Name]
 	if ok {
-		log.V(1).Info("Forwarder already running")
+		log.V(2).Info("Forwarder already running")
 	} else {
 		forwarder, err := setupTCPForwarder(unDyingProxy)
 		if err != nil {
@@ -98,7 +112,7 @@ func (r *UnDyingProxyReconciler) handleTCP(
 			log.Error(err, "Failed to setup Forwarder")
 			return true, ctrl.Result{}, err
 		}
-		log.V(1).Info("Forwarder is now running")
+		log.V(2).Info("Forwarder is now running")
 		tcpForwarders[unDyingProxy.Name] = forwarder
 	}
 	tcpForwardersMux.Unlock()
@@ -111,19 +125,24 @@ func (r *UnDyingProxyReconciler) handleTCP(
 			return true, ctrl.Result{}, err
 		}
 
-		log.V(1).Info("Service for UnDyingProxy is up to date")
+		log.V(2).Info("Service for UnDyingProxy is up to date")
 	}
 
 	return false, ctrl.Result{}, nil
 }
 
-// setupTCPForwarder sets up a TCP forwarder for an UnDyingProxy
-// runs once per UnDyingProxy
-func setupTCPForwarder(unDyingProxy *proxyv1alpha1.UnDyingProxy) (*tcpForwarder, error) {
+// setupTCPForwarder creates and starts a new TCP forwarder for an UnDyingProxy.
+// It resolves listen and target addresses, creates a TCP listener, initializes
+// the tcpForwarder struct, starts the acceptTCPConnections goroutine, and increments
+// the running forwarder metric.
+// It runs once per UnDyingProxy with a TCP configuration.
+func setupTCPForwarder(
+	unDyingProxy *proxyv1alpha1.UnDyingProxy,
+) (*tcpForwarder, error) {
 	listenAddr := fmt.Sprintf(":%d", unDyingProxy.Spec.TCP.ListenPort)
 	targetAddr := fmt.Sprintf("%s:%d", unDyingProxy.Spec.TCP.TargetHost, unDyingProxy.Spec.TCP.TargetPort)
 
-	log := ctrl.Log.WithValues(
+	log := ctrl.Log.WithName("tcpForwarder").WithValues(
 		"name", unDyingProxy.Name,
 		"protocol", "TCP",
 		"listen", listenAddr,
@@ -148,8 +167,10 @@ func setupTCPForwarder(unDyingProxy *proxyv1alpha1.UnDyingProxy) (*tcpForwarder,
 	return forwarder, nil
 }
 
-// acceptTCPConnections listens for new TCP connections and
-// sets up goroutines to forward them.
+// acceptTCPConnections runs in a dedicated goroutine for each TCP forwarder.
+// It continuously accepts incoming client connections on the listener.
+// For each accepted connection, it launches a forwardTCPConnection goroutine.
+// It handles listener closure and errors during accept.
 func acceptTCPConnections(
 	forwarder *tcpForwarder,
 	listener net.Listener,
@@ -180,11 +201,15 @@ func acceptTCPConnections(
 	}
 }
 
+// shutdownAcceptTCPConnections handles the cleanup when the acceptTCPConnections goroutine exits.
+// It ensures the listener is closed, removes the forwarder from the global map,
+// closes the forwarder's closeChan, and decrements the running forwarder metric.
 func shutdownAcceptTCPConnections(
 	forwarder *tcpForwarder,
 	listener net.Listener,
 ) {
 	log := forwarder.log
+	log.V(2).Info("Shutting down TCP listener")
 
 	tcpForwardersMux.Lock()
 
@@ -192,7 +217,7 @@ func shutdownAcceptTCPConnections(
 	if err != nil && !errors.Is(err, net.ErrClosed) {
 		log.Error(err, "Failed to close listener")
 	} else {
-		log.V(1).Info("Listener Closed")
+		log.V(2).Info("Listener Closed")
 	}
 
 	delete(tcpForwarders, forwarder.name)
@@ -202,13 +227,16 @@ func shutdownAcceptTCPConnections(
 	mTCPForwardersRunning.Dec()
 }
 
-// forwardTCPConnection forwards TCP connections from clients to a target server, and back
+// forwardTCPConnection runs in a dedicated goroutine for each client TCP connection.
+// It establishes a connection to the target server and then uses io.Copy in separate
+// goroutines to proxy data bidirectionally between the client and the target.
+// It handles connection closures and errors during data copying, updating relevant metrics.
 func forwardTCPConnection(
 	forwarder *tcpForwarder,
 	connToListener net.Conn,
 	targetAddr string,
 ) {
-	log := forwarder.log
+	log := forwarder.log.WithValues("clientAddr", connToListener.RemoteAddr().String(), "targetAddr", targetAddr)
 
 	// connToTarget represents a connection to the target server
 	connToTarget, err := net.Dial("tcp", targetAddr)
@@ -218,6 +246,7 @@ func forwardTCPConnection(
 		return
 	}
 	defer func() {
+		log.V(1).Info("Closing target connection")
 		err = connToTarget.Close()
 		if err != nil && !errors.Is(err, net.ErrClosed) {
 			log.Error(err, "Failed to close target connection")
@@ -227,6 +256,7 @@ func forwardTCPConnection(
 	// fromClientToTarget
 	go func() {
 		defer func() {
+			log.V(2).Info("Closing client listener connection")
 			err = connToListener.Close()
 			if err != nil && !errors.Is(err, net.ErrClosed) {
 				log.Error(err, "Failed to close listener connection")

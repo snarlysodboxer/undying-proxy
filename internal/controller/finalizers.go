@@ -29,16 +29,23 @@ import (
 )
 
 const (
+	// finalizerName is the name of the finalizer used by this controller.
 	finalizerName = "undyingproxies.proxy.sfact.io/finalizer"
 )
 
+// removeFinalizer removes the controller's finalizer from the UnDyingProxy resource.
+// It uses RetryOnConflict to handle potential conflicts during the update.
+// It returns true if ctrl.Result and error should be returned to the caller,
+// false if the reconciliation should continue.
+//
+//nolint:unparam
 func (r *UnDyingProxyReconciler) removeFinalizer(
 	ctx context.Context,
 	req ctrl.Request,
 	unDyingProxy *proxyv1alpha1.UnDyingProxy,
 ) (bool, ctrl.Result, error) {
 	log := ctx.Value(ctxLogger{}).(logr.Logger)
-	log.V(1).Info("Removing finalizer")
+	log.V(1).Info("Removing finalizer", "finalizerName", finalizerName)
 
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		err := r.Get(ctx, req.NamespacedName, unDyingProxy)
@@ -60,17 +67,23 @@ func (r *UnDyingProxyReconciler) removeFinalizer(
 		return err
 	})
 	if err != nil {
-		log.Error(err, "Failed to remove finalizer")
+		log.Error(err, "Failed to remove finalizer", "finalizerName", finalizerName)
 		mOperatorErrorsTotal.WithLabelValues("FailedRemoveFinalizer").Inc()
 		return true, ctrl.Result{}, err
 	}
 
-	log.V(1).Info("Removed finalizer")
+	log.V(1).Info("Removed finalizer", "finalizerName", finalizerName)
 
 	return false, ctrl.Result{}, nil
 }
 
-// handleFinalizer handles setting the finalizer for an UnDyingProxy
+// handleFinalizer ensures that the controller's finalizer is present on the
+// UnDyingProxy resource. If the finalizer is not present, it adds it using
+// RetryOnConflict to handle potential update conflicts.
+// It returns true if ctrl.Result and error should be returned to the caller,
+// false if the reconciliation should continue.
+//
+//nolint:unparam
 func (r *UnDyingProxyReconciler) handleFinalizer(
 	ctx context.Context,
 	req ctrl.Request,
@@ -81,7 +94,7 @@ func (r *UnDyingProxyReconciler) handleFinalizer(
 		return false, ctrl.Result{}, nil
 	}
 
-	log.V(1).Info("Adding finalizer")
+	log.V(1).Info("Adding finalizer", "finalizerName", finalizerName)
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		if err := r.Get(ctx, req.NamespacedName, unDyingProxy); err != nil {
 			return err
@@ -93,11 +106,11 @@ func (r *UnDyingProxyReconciler) handleFinalizer(
 		return nil
 	})
 	if err != nil {
-		log.Error(err, "Failed to add finalizer")
+		log.Error(err, "Failed to add finalizer", "finalizerName", finalizerName)
 		mOperatorErrorsTotal.WithLabelValues("FailedAddFinalizer").Inc()
 		return true, ctrl.Result{}, err
 	}
-	log.V(1).Info("Finalizer added")
+	log.V(1).Info("Finalizer added", "finalizerName", finalizerName)
 
 	// continue reconciliation
 	return false, ctrl.Result{}, nil

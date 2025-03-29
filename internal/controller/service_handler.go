@@ -29,6 +29,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// manageServiceForUnDyingProxy ensures the specified Kubernetes Service
+// (either TCP or UDP, determined by r.TCPServiceToManage or r.UDPServiceToManage)
+// has the correct port configuration based on the UnDyingProxy spec.
+// It fetches the Service and adds or updates the port entry for the UnDyingProxy.
 func (r *UnDyingProxyReconciler) manageServiceForUnDyingProxy(
 	ctx context.Context,
 	unDyingProxy *proxyv1alpha1.UnDyingProxy,
@@ -44,7 +48,7 @@ func (r *UnDyingProxyReconciler) manageServiceForUnDyingProxy(
 	}
 	log := ctx.Value(ctxLogger{}).(logr.Logger).WithValues(
 		"protocol", protocolStr,
-		"Service.Name", serviceName,
+		"serviceName", serviceName,
 		"listenPort", listenPort,
 	)
 
@@ -60,7 +64,7 @@ func (r *UnDyingProxyReconciler) manageServiceForUnDyingProxy(
 			// targetPort is listenPort because this app is the target
 			existingPort.TargetPort == intstr.FromInt(listenPort) &&
 			existingPort.Protocol == protocol {
-			log.V(1).Info("Service already up to date")
+			log.V(2).Info("Service already up to date")
 
 			return nil
 		}
@@ -78,11 +82,15 @@ func (r *UnDyingProxyReconciler) manageServiceForUnDyingProxy(
 		return err
 	}
 
-	log.V(1).Info("Updated Service with listenPort")
+	log.V(2).Info("Updated Service with listenPort")
 
 	return nil
 }
 
+// updateService performs the actual update or addition of a ServicePort to a Service.
+// It fetches the latest version of the Service and uses a strategic merge patch
+// (client.MergeFrom) within a RetryOnConflict loop to add or modify the port entry
+// corresponding to the unDyingProxyName.
 func (r *UnDyingProxyReconciler) updateService(
 	ctx context.Context,
 	namespacedName types.NamespacedName,
@@ -91,6 +99,7 @@ func (r *UnDyingProxyReconciler) updateService(
 	protocol v1.Protocol,
 	unDyingProxyName string,
 ) error {
+	log := ctx.Value(ctxLogger{}).(logr.Logger).WithValues("serviceName", namespacedName.Name, "action", "updateServicePort")
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		if err := r.Get(ctx, namespacedName, service); err != nil {
 			return err
@@ -104,11 +113,13 @@ func (r *UnDyingProxyReconciler) updateService(
 				serviceCopy.Spec.Ports[index].Port = int32(listenPort)
 				serviceCopy.Spec.Ports[index].TargetPort = intstr.FromInt(listenPort)
 				serviceCopy.Spec.Ports[index].Protocol = protocol
+				log.V(2).Info("Updating existing Service port")
 				break
 			}
 		}
 
 		if !exists {
+			log.V(2).Info("Adding new Service port")
 			portSpec := v1.ServicePort{
 				Name:       unDyingProxyName,
 				Port:       int32(listenPort),
@@ -127,6 +138,10 @@ func (r *UnDyingProxyReconciler) updateService(
 	return nil
 }
 
+// cleanupServiceForUnDyingProxy removes the port configuration associated with a specific
+// UnDyingProxy from the managed Kubernetes Service (TCP or UDP).
+// It fetches the Service and removes the corresponding port entry using a strategic
+// merge patch within a RetryOnConflict loop.
 func (r *UnDyingProxyReconciler) cleanupServiceForUnDyingProxy(
 	ctx context.Context,
 	unDyingProxy *proxyv1alpha1.UnDyingProxy,
@@ -143,8 +158,9 @@ func (r *UnDyingProxyReconciler) cleanupServiceForUnDyingProxy(
 
 	log := ctx.Value(ctxLogger{}).(logr.Logger).WithValues(
 		"protocol", protocolStr,
-		"Service.Name", serviceName,
+		"serviceName", serviceName,
 		"listenPort", listenPort,
+		"action", "cleanupServicePort",
 	)
 
 	service := &v1.Service{}
@@ -164,13 +180,14 @@ func (r *UnDyingProxyReconciler) cleanupServiceForUnDyingProxy(
 			}
 		}
 
+		log.V(2).Info("Attempting to remove Service port")
 		return r.Patch(ctx, serviceCopy, client.MergeFrom(service), patchOptions)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to update (%s) Service to remove Port: (%w)", service.Name, err)
 	}
 
-	log.V(1).Info("Updated Service to remove listenPort")
+	log.V(2).Info("Updated Service to remove listenPort")
 
 	return nil
 }

@@ -14,19 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package e2e
-
-import (
-	"fmt"
-	"testing"
-
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-)
-
-// Run e2e tests using the Ginkgo runner.
-func TestE2E(t *testing.T) {
-	RegisterFailHandler(Fail)
-	_, _ = fmt.Fprintf(GinkgoWriter, "Starting undying-proxy suite\n")
-	RunSpecs(t, "e2e suite")
-}
+// Package controller contains the core reconciliation logic for the UnDyingProxy operator.
+// It manages the lifecycle of UnDyingProxy custom resources, setting up TCP and UDP
+// forwarders, managing associated Kubernetes Services, and handling finalizers.
+package controller
