@@ -251,7 +251,10 @@ func sendTestDataOverUDP(undyingproxy *proxyv1alpha1.UnDyingProxy) error {
 	if err != nil {
 		return err
 	}
-	defer clientConnection.Close()
+	defer func() {
+		err := clientConnection.Close()
+		Expect(err).To(Or(BeNil(), MatchError(net.ErrClosed)))
+	}()
 
 	message := "Hello, UDP!"
 	_, err = clientConnection.Write([]byte(message))

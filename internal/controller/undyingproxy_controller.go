@@ -32,14 +32,16 @@ import (
 	proxyv1alpha1 "github.com/snarlysodboxer/undying-proxy/api/v1alpha1"
 )
 
-// ctxLogger is the context key type for the logger
+// ctxLogger is the context key type for the logger. It's used to pass the logger
+// instance through the context.
 type ctxLogger struct{}
 
+// patchOptions defines the FieldManager for server-side apply patches.
 var patchOptions = &client.PatchOptions{FieldManager: "undying-proxy-operator"}
 
-// custom metrics - MOVED TO internal/controller/metrics.go
-
-// UnDyingProxyReconciler reconciles a UnDyingProxy object
+// UnDyingProxyReconciler reconciles a UnDyingProxy object. It holds the client
+// for interacting with the Kubernetes API, the scheme for object type mapping,
+// configuration for managed services, and UDP buffer size.
 type UnDyingProxyReconciler struct {
 	client.Client
 	Scheme             *runtime.Scheme
@@ -55,12 +57,21 @@ type UnDyingProxyReconciler struct {
 // +kubebuilder:rbac:groups="",namespace=undying-proxy,resources=services/status,verbs=get
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
+// move the current state of the cluster closer to the desired state defined
+// in the UnDyingProxy custom resource.
+//
+// It performs the following steps:
+// 1. Fetches the UnDyingProxy instance.
+// 2. Handles deletion logic if the resource is marked for deletion.
+// 3. Ensures the finalizer is present on the resource.
+// 4. Manages TCP forwarding if specified in the spec.
+// 5. Manages UDP forwarding if specified in the spec.
+// 6. Updates the status to Ready.
 func (r *UnDyingProxyReconciler) Reconcile(
 	ctx context.Context,
 	req ctrl.Request,
 ) (ctrl.Result, error) {
-	log := crlog.FromContext(ctx)
+	log := crlog.FromContext(ctx).WithName("reconciler")
 	ctx = context.WithValue(ctx, ctxLogger{}, log) // Add logger to context value
 
 	// get UnDyingProxy object
@@ -124,6 +135,8 @@ func (r *UnDyingProxyReconciler) Reconcile(
 }
 
 // SetupWithManager sets up the controller with the Manager.
+// It configures the controller to watch UnDyingProxy resources and sets the
+// maximum number of concurrent reconciles.
 func (r *UnDyingProxyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&proxyv1alpha1.UnDyingProxy{}).
@@ -131,7 +144,9 @@ func (r *UnDyingProxyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// handleDeletion handles the deletion of an UnDyingProxy
+// handleDeletion checks if the UnDyingProxy resource is marked for deletion.
+// If it is, it executes the cleanup logic (stopping forwarders, removing service entries)
+// and removes the finalizer. It returns true if reconciliation should stop.
 func (r *UnDyingProxyReconciler) handleDeletion(
 	ctx context.Context,
 	req ctrl.Request,
@@ -160,7 +175,7 @@ func (r *UnDyingProxyReconciler) handleDeletion(
 		return true, ctrl.Result{}, err
 	}
 
-	log.V(1).Info("UnDyingProxy is being deleted, performing finalizer operations")
+	log.V(1).Info("UnDyingProxy marked for deletion, performing finalizer operations")
 
 	if unDyingProxy.Spec.TCP != nil {
 		doReturn, result, err := r.handleTCPCleanup(ctx, unDyingProxy)

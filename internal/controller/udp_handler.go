@@ -32,34 +32,46 @@ import (
 )
 
 var (
-	udpForwarders    = make(map[string]*udpForwarder)
+	// udpForwarders maps UnDyingProxy names to their active udpForwarder instances.
+	udpForwarders = make(map[string]*udpForwarder)
+	// udpForwardersMux protects concurrent access to the udpForwarders map.
 	udpForwardersMux = &sync.Mutex{}
 )
 
-// udpForwarder tracks the UDP listener and connections for an UnDyingProxy
+// udpForwarder tracks the UDP listener connection and active client connections
+// for a specific UnDyingProxy resource.
 type udpForwarder struct {
 	name               string
-	closeChan          chan struct{}
-	listenAddress      *net.UDPAddr
-	targetAddress      *net.UDPAddr
-	listenerConnection *net.UDPConn
-	clients            map[string]*udpClient
-	clientsMux         *sync.Mutex
-	writeTimeout       time.Duration
-	readTimeout        time.Duration
-	udpBufferBytes     int
+	closeChan          chan struct{}         // Signals the forwarder goroutines to shut down.
+	listenAddress      *net.UDPAddr          // The address the proxy listens on.
+	targetAddress      *net.UDPAddr          // The target address to forward packets to.
+	listenerConnection *net.UDPConn          // The main UDP connection listening for client packets.
+	clients            map[string]*udpClient // Map of active client connections (clientAddr -> udpClient).
+	clientsMux         *sync.Mutex           // Protects concurrent access to the clients map.
+	writeTimeout       time.Duration         // Timeout for writing packets (to target and back to client).
+	readTimeout        time.Duration         // Timeout for reading packets (from target).
+	udpBufferBytes     int                   // Size of the buffer used for reading/writing UDP packets.
 	log                logr.Logger
 }
 
-// udpClient tracks a client and target connection
+// udpClient tracks an individual client connection to the proxy and its corresponding
+// connection to the target service.
 type udpClient struct {
-	// clientAddress is the IP address to the client, e.g. the game client
+	// clientAddress is the address of the connecting client.
 	clientAddress *net.UDPAddr
-	// targetConnection is the connection to the target, e.g. the game server
+	// targetConnection is the dedicated UDP connection to the target service for this client.
 	targetConnection *net.UDPConn
 	log              logr.Logger
 }
 
+// handleUDPCleanup stops the UDP forwarder associated with the given UnDyingProxy.
+// It signals the forwarder to close, closes the main listener connection, cleans up
+// any active client connections, removes the forwarder from the global map, and
+// triggers the cleanup of the associated Service port.
+// It returns true if ctrl.Result and error should be returned to the caller,
+// false if the reconciliation should continue.
+//
+//nolint:unparam
 func (r *UnDyingProxyReconciler) handleUDPCleanup(
 	ctx context.Context,
 	unDyingProxy *proxyv1alpha1.UnDyingProxy,
@@ -69,14 +81,14 @@ func (r *UnDyingProxyReconciler) handleUDPCleanup(
 	udpForwardersMux.Lock()
 	forwarder, found := udpForwarders[unDyingProxy.Name]
 	if !found {
-		log.V(1).Info("UDP Forwarder was already stopped")
+		log.V(2).Info("UDP Forwarder was already stopped")
 	} else {
 		go func() { forwarder.closeChan <- struct{}{} }()
 		err := forwarder.listenerConnection.Close()
 		if err != nil && !errors.Is(err, net.ErrClosed) {
 			log.Error(err, "Failed to close UDP listenerConnection")
 		}
-		log.V(1).Info("UDP Forwarder is now stopped")
+		log.V(2).Info("UDP Forwarder is now stopped")
 	}
 	udpForwardersMux.Unlock()
 
@@ -87,13 +99,20 @@ func (r *UnDyingProxyReconciler) handleUDPCleanup(
 			mOperatorErrorsTotal.WithLabelValues("FailedServiceCleanup").Inc()
 			return true, ctrl.Result{}, err
 		}
-		log.V(1).Info("Service for UnDyingProxy is now cleaned up")
+		log.V(2).Info("Service for UnDyingProxy is now cleaned up")
 	}
 
 	return false, ctrl.Result{}, nil
 }
 
-// handleUDP handles the UDP configuration for an UnDyingProxy
+// handleUDP ensures the UDP forwarder for the given UnDyingProxy is running.
+// It validates configuration (UDPBufferBytes). If a forwarder doesn't exist,
+// it calls setupUDPForwarder to create and start one. It also ensures the
+// associated Kubernetes Service port is correctly configured.
+// It returns true if ctrl.Result and error should be returned to the caller,
+// false if the reconciliation should continue.
+//
+//nolint:unparam
 func (r *UnDyingProxyReconciler) handleUDP(
 	ctx context.Context,
 	unDyingProxy *proxyv1alpha1.UnDyingProxy,
@@ -108,7 +127,7 @@ func (r *UnDyingProxyReconciler) handleUDP(
 	udpForwardersMux.Lock()
 	_, ok := udpForwarders[unDyingProxy.Name]
 	if ok {
-		log.V(1).Info("UDP Forwarder already running")
+		log.V(2).Info("UDP Forwarder already running")
 	} else {
 		forwarder, err := setupUDPForwarder(unDyingProxy, r.UDPBufferBytes)
 		if err != nil {
@@ -117,7 +136,7 @@ func (r *UnDyingProxyReconciler) handleUDP(
 			log.Error(err, "Failed to setup Forwarder")
 			return true, ctrl.Result{}, err
 		}
-		log.V(1).Info("UDP Forwarder is now running")
+		log.V(2).Info("UDP Forwarder is now running")
 		udpForwarders[unDyingProxy.Name] = forwarder
 	}
 	udpForwardersMux.Unlock()
@@ -130,14 +149,17 @@ func (r *UnDyingProxyReconciler) handleUDP(
 			return true, ctrl.Result{}, err
 		}
 
-		log.V(1).Info("Service for UnDyingProxy is up to date")
+		log.V(2).Info("Service for UnDyingProxy is up to date")
 	}
 
 	return false, ctrl.Result{}, nil
 }
 
-// setupUDPForwarder sets up a UDP forwarder for an UnDyingProxy
-// runs once per UnDyingProxy
+// setupUDPForwarder creates and starts a new UDP forwarder for an UnDyingProxy.
+// It resolves listen and target UDP addresses, creates the main listening UDP connection,
+// initializes the udpForwarder struct with timeouts and buffer size, starts the
+// forwardUDPClientsToTarget goroutine, and increments the running forwarder metric.
+// It runs once per UnDyingProxy with a UDP configuration.
 func setupUDPForwarder(
 	unDyingProxy *proxyv1alpha1.UnDyingProxy,
 	udpBufferBytes int,
@@ -158,7 +180,7 @@ func setupUDPForwarder(
 		return nil, fmt.Errorf("failed to resolve target address: %w", err)
 	}
 
-	log := ctrl.Log.WithValues(
+	log := ctrl.Log.WithName("udpForwarder").WithValues(
 		"name", unDyingProxy.Name,
 		"protocol", "UDP",
 	)
@@ -200,11 +222,17 @@ func setupUDPForwarder(
 	return forwarder, nil
 }
 
-// forwardUDPClientsToTarget handles forwarding UDP packets from clients to the target.
-// this goroutine stays running for the lifetime of the forwarder, and for each client that connects
-// it sets up an additional goroutine to forward packets from the target back to that client.
-// each client is tracked in the forwarder.clients map, and self-cleans up when experiencing a read or write timeout.
-func forwardUDPClientsToTarget(forwarder *udpForwarder) {
+// forwardUDPClientsToTarget runs in a dedicated goroutine for each UDP forwarder.
+// It continuously reads packets from the main listenerConnection. For each packet received:
+//  1. It identifies the client address.
+//  2. If it's a new client, it calls setupUDPClient to establish a target connection
+//     and start a forwardUDPTargetToClient goroutine for that client.
+//  3. It forwards the received packet to the appropriate target connection.
+//
+// It handles listener closure and errors during reads/writes.
+func forwardUDPClientsToTarget(
+	forwarder *udpForwarder,
+) {
 	log := forwarder.log.WithValues(
 		"direction", "fromClientsToTarget",
 		"listen", forwarder.listenAddress.String(),
@@ -268,8 +296,14 @@ func forwardUDPClientsToTarget(forwarder *udpForwarder) {
 	}
 }
 
-func shutdownUDPClientsToTargetForwarder(forwarder *udpForwarder) {
+// shutdownUDPClientsToTargetForwarder handles the cleanup when the forwardUDPClientsToTarget goroutine exits.
+// It closes all active client target connections, removes the forwarder from the global map,
+// and decrements the running forwarder metric.
+func shutdownUDPClientsToTargetForwarder(
+	forwarder *udpForwarder,
+) {
 	log := forwarder.log
+	log.V(1).Info("Shutting down UDP client-to-target forwarder")
 
 	udpForwardersMux.Lock()
 
@@ -290,6 +324,10 @@ func shutdownUDPClientsToTargetForwarder(forwarder *udpForwarder) {
 	log.V(1).Info("UDP Forwarder is now stopped")
 }
 
+// setupUDPClient creates a dedicated UDP connection to the target service for a new client.
+// It dials the target address, creates the udpClient struct, adds it to the forwarder's
+// clients map, increments the connected clients metric, and starts the
+// forwardUDPTargetToClient goroutine for handling packets back from the target.
 func setupUDPClient(
 	forwarder *udpForwarder,
 	clientAddr *net.UDPAddr,
@@ -311,18 +349,27 @@ func setupUDPClient(
 	udpClient := &udpClient{
 		clientAddress:    clientAddr,
 		targetConnection: targetConnection,
-		log:              log,
+		log:              log.WithName("udpClient"),
 	}
 	forwarder.clients[clientAddr.String()] = udpClient
 	mUDPClientsConnected.WithLabelValues(forwarder.name).Inc()
 
 	go forwardUDPTargetToClient(forwarder, udpClient)
 
+	log.V(1).Info("Successfully set up UDP client")
+
 	return udpClient, nil
 }
 
-// forwardUDPTargetToClient handles forwarding packets from the target back to a specific client
-func forwardUDPTargetToClient(forwarder *udpForwarder, udpClient *udpClient) {
+// forwardUDPTargetToClient runs in a dedicated goroutine for each connected UDP client.
+// It continuously reads packets from the client's dedicated targetConnection.
+// For each packet received from the target, it forwards it back to the original client
+// using the main listenerConnection and the client's address.
+// It uses read/write deadlines to handle timeouts and connection cleanup.
+func forwardUDPTargetToClient(
+	forwarder *udpForwarder,
+	udpClient *udpClient,
+) {
 	log := udpClient.log.WithValues("direction", "fromTargetToClient")
 
 	defer shutdownUDPTargetToClientForwarder(forwarder, udpClient)
@@ -353,7 +400,7 @@ func forwardUDPTargetToClient(forwarder *udpForwarder, udpClient *udpClient) {
 			mUDPFromTargetToClientsBytesTotal.WithLabelValues(forwarder.name).Add(float64(numBytesWritten))
 			if err != nil {
 				mUDPForwardingErrorsTotal.WithLabelValues("WriteToClient").Inc()
-				log.Error(err, "Error writing to client")
+				log.Error(err, "Failed to forward packet to client", "clientAddr", udpClient.clientAddress.String())
 				return
 			}
 		}
@@ -369,11 +416,16 @@ func forwardUDPTargetToClient(forwarder *udpForwarder, udpClient *udpClient) {
 	}
 }
 
+// shutdownUDPTargetToClientForwarder handles the cleanup when a forwardUDPTargetToClient goroutine exits
+// (e.g., due to read timeout or error).
+// It closes the client's targetConnection, removes the client from the forwarder's clients map,
+// and decrements the connected clients metric.
 func shutdownUDPTargetToClientForwarder(
 	forwarder *udpForwarder,
 	udpClient *udpClient,
 ) {
 	log := udpClient.log
+	log.V(1).Info("Shutting down UDP target-to-client forwarder", "clientAddr", udpClient.clientAddress.String())
 
 	forwarder.clientsMux.Lock()
 
@@ -385,7 +437,7 @@ func shutdownUDPTargetToClientForwarder(
 	delete(forwarder.clients, udpClient.clientAddress.String())
 	forwarder.clientsMux.Unlock()
 
-	log.V(2).Info("Cleaned up UDP client: " + udpClient.clientAddress.String())
+	log.V(1).Info("Cleaned up UDP client: " + udpClient.clientAddress.String())
 
 	mUDPClientsConnected.WithLabelValues(forwarder.name).Dec()
 }
