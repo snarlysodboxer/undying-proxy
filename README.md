@@ -34,7 +34,7 @@ This supports only paying for one Loadbalancer, or even avoiding a cloud Loadbal
 
 For example:
 
-- Run many game servers on a single IP, each on a different port, all behind a single cloud Loadbalancer (using the default Deployment and LoadBalancer Service type).
+- Run many game servers behind a single external IP and cloud LoadBalancer, each on a different port.
 - Run as a DaemonSet (by modifying `config/manager/deployment.undying-proxy.yaml`) on specific nodes, set up external DNS (e.g., using [ExternalDNS](https://github.com/kubernetes-sigs/external-dns)) to point a domain to your node IPs, and potentially avoid a cloud Loadbalancer altogether. This requires clients to connect directly to node IPs.
 
 ## Description
