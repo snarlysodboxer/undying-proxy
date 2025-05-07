@@ -48,6 +48,10 @@ spec:
     listenPort: 27015 # External port on the proxy's IP
     targetPort: 27015 # Internal port of the game server pod/service
     targetHost: my-game-server-1001.game-ns.svc.cluster.local
+  tcp:
+    listenPort: 27015
+    targetPort: 27015
+    targetHost: my-game-server-1001.game-ns.svc.cluster.local
 ---
 apiVersion: proxy.sfact.io/v1alpha1
 kind: UnDyingProxy
