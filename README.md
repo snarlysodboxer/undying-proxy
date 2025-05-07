@@ -54,11 +54,9 @@ spec:
     targetHost: my-game-server-1001.game-ns.svc.cluster.local
 spec:
   tcp:
-    listenPort: 5432 # External port
-    targetPort: 5432 # Internal port
-    targetHost: my-postgres-service.db-ns.svc.cluster.local
 ```
 
+UnDyingProxy can also be run as a DaemonSet along with round robin DNS to point a domain to your node IPs, and potentially avoid a cloud Loadbalancer altogether. This requires clients to connect directly to node IPs.
 ## Description
 
 UnDyingProxy listens for TCP and UDP connections on designated ports defined in `UnDyingProxy` custom resources, and forwards packets to the specified destination addresses and ports. This operator works like the NGINX Ingress Controller in that it does the actual forwarding itself, rather than operating external resources. Therefore, it should be run as multiple replicas to provide high availability.
