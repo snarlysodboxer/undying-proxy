@@ -1,51 +1,69 @@
-# UnDyingProxy is a TCP/UDP forwarder for Kubernetes
+
+![UnDying Proxy](udp.png)
+
+# UnDyingProxy: A UDP and TCP forwarder for Kubernetes
+---
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Go Version](https://img.shields.io/badge/Go-1.22+-blue.svg)](https://golang.org/dl/)
 [![Go Report Card](https://goreportcard.com/badge/github.com/snarlysodboxer/undying-proxy)](https://goreportcard.com/report/github.com/snarlysodboxer/undying-proxy)
 
-## Why?
+**UnDyingProxy redirects TCP and UDP traffic from a single external IP to internal Kubernetes services across namespaces, significantly reducing cloud load balancer costs and simplifying ingress.**
 
-Cloud load balancers can be expensive. This operator forwards TCP and UDP traffic from a single IP and many ports, to many destinations, one destination per source port for now. It is designed to be run as multiple replicas to provide high availability.
+## Why UnDyingProxy?
 
-Each `UnDyingProxy` object specifies one listen port and one target host and port to forward to each for TCP and UDP. e.g.
+Cloud load balancers are powerful but can become expensive, especially when you need to expose numerous services (like game servers, databases, or IoT endpoints) each in it's own namespace and requiring its own port. UnDyingProxy offers a cost-effective alternative by allowing you to:
+
+*   **Multiplex Ports:** Forward traffic from many source ports on a single external IP to different internal services and ports.
+*   **Reduce Cloud Costs:** Pay for potentially only one cloud load balancer (or even none!) instead of many.
+*   **Simplify Ingress:** Manage TCP/UDP forwarding declaratively using Kubernetes custom resources.
+*   **Achieve High Availability:** Run multiple replicas of the proxy for resilience.
+
+Each `UnDyingProxy` object specifies one listen port and one target host and port to forward to each for TCP and UDP.
+
+This supports only paying for one Loadbalancer, or even avoiding a cloud Loadbalancer altogether by running as a DaemonSet on nodes with direct public IPs. If using a cloud Loadbalancer, this operator can automatically add/remove `Ports` in a `Service` object as `UnDyingProxy` objects are created/destroyed, to open/close the ports in the Loadbalancer.
+
+## ✨ Features
+
+*   **TCP & UDP Forwarding:** Configure forwarding rules for both protocols independently per `UnDyingProxy` resource.
+*   **Dynamic Configuration:** Define forwarding rules using the `UnDyingProxy` Custom Resource Definition (CRD). Changes are automatically detected and applied.
+*   **Automatic Service Port Management (Optional):** Automatically update Kubernetes `Service` ports (e.g., for LoadBalancer Services) as `UnDyingProxy` resources are created/deleted.
+*   **High Availability:** Designed to run with multiple replicas behind a Kubernetes Service; leader election is disabled.
+*   **Prometheus Metrics:** Exposes detailed metrics for monitoring traffic and operator health.
+*   **Configurable Timeouts & Buffers:** Fine-tune UDP connection handling.
+
+## Example Use Case
+
+- Forward both UDP and TCP from external port `27015` to the same port on an internal Kubernetes Service in a different namespace. 
 
 ```yaml
 ---
 apiVersion: proxy.sfact.io/v1alpha1
 kind: UnDyingProxy
 metadata:
-  name: example
-  namespace: undying-proxy
-  labels:
-    app: undying-proxy
+  name: game-server-1001
+  namespace: undying-proxy # Must match operator's namespace
 spec:
-  tcp:
-    listenPort: 1234
-    targetPort: 1234
-    targetHost: my-app.example.svc.cluster.local
   udp:
-    listenPort: 1234
-    targetPort: 1234
-    targetHost: my-app.example.svc.cluster.local
+    listenPort: 27015 # External port on the proxy's IP
+    targetPort: 27015 # Internal port of the game server pod/service
+    targetHost: my-game-server-1001.game-ns.svc.cluster.local
+  tcp:
+    listenPort: 27015
+    targetPort: 27015
+    targetHost: my-game-server-1001.game-ns.svc.cluster.local
 ```
 
-This supports only paying for one Loadbalancer, or even avoiding a cloud Loadbalancer altogether. If using a cloud Loadbalancer, this operator can automatically add/remove `Ports` in a `Service` object as `UnDyingProxy` objects are created/destroyed, to open/close the ports in the Loadbalancer.
-
-For example:
-
-- Run many game servers behind a single external IP and cloud LoadBalancer, each on a different port.
-- Run as a DaemonSet (by modifying `config/manager/deployment.undying-proxy.yaml`) on specific nodes, set up external DNS (e.g., using [ExternalDNS](https://github.com/kubernetes-sigs/external-dns)) to point a domain to your node IPs, and potentially avoid a cloud Loadbalancer altogether. This requires clients to connect directly to node IPs.
-
+- UnDyingProxy can also be run as a DaemonSet along with round robin DNS to point a domain to your node IPs, and potentially avoid a cloud Loadbalancer altogether. This requires clients to connect directly to node IPs.
 ## Description
 
-UnDyingProxy listens for TCP and UDP connections on designated ports, and forwards packets to destination addresses and ports. Configuration is done via UnDyingProxy objects, one for each port to be forwarded. This operator works like the NGINX Ingress Controller in that it does the actual forwarding itself, rather than operating external forwarders. Therefore, it should be run as multiple replicas to provide high availability. Leader election is disabled. Currently, each listener supports forwarding to a single destination address and port.
+UnDyingProxy listens for TCP and UDP connections on designated ports defined in `UnDyingProxy` custom resources, and forwards packets to the specified destination addresses and ports. This operator works like the NGINX Ingress Controller in that it does the actual forwarding itself, rather than operating external resources. Therefore, it should be run as multiple replicas to provide high availability.
 
-The `--operator-namespace` flag must be set, as this is a namespaced operator. The operator will only watch for UnDyingProxy objects in the namespace specified by this flag. The operator can manage a Kubernetes `Service` object's Ports to dynamically support new ingress for each UnDyingProxy, for example through a cloud provider's Loadbalancer.
+The `--operator-namespace` flag must be set, as this is a namespaced operator. The operator will only watch for `UnDyingProxy` objects in the namespace specified by this flag.
 
-Run one set of replicas of this operator per IP to listen upon.
+Run one set of replicas of this operator per IP you need to listen upon.
 
-Use `config/manager` as example configs to customize.
+Use `config/manager` as example configs to customize your deployment.
 
 ## Architecture
 
