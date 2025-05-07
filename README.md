@@ -52,12 +52,6 @@ spec:
     listenPort: 27015
     targetPort: 27015
     targetHost: my-game-server-1001.game-ns.svc.cluster.local
----
-apiVersion: proxy.sfact.io/v1alpha1
-kind: UnDyingProxy
-metadata:
-  name: database-tunnel
-  namespace: undying-proxy
 spec:
   tcp:
     listenPort: 5432 # External port
