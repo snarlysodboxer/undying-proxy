@@ -34,7 +34,7 @@ This supports only paying for one Loadbalancer, or even avoiding a cloud Loadbal
 
 ## Example Use Case
 
-Forward external UDP port `27015` to an internal game server and external TCP port `5432` to a database, all managed by the same UnDyingProxy deployment listening on a single IP.
+- Forward both UDP and TCP from external port `27015` to the same port on an internal Kubernetes Service in a different namespace. 
 
 ```yaml
 ---
