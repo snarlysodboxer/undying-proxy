@@ -12,7 +12,7 @@
 
 ## Why UnDyingProxy?
 
-Cloud load balancers are powerful but can become expensive, especially when you need to expose numerous non-HTTP services (like game servers, databases, or IoT endpoints) each requiring its own port. UnDyingProxy offers a cost-effective alternative by allowing you to:
+Cloud load balancers are powerful but can become expensive, especially when you need to expose numerous services (like game servers, databases, or IoT endpoints) each in it's own namespace and requiring its own port. UnDyingProxy offers a cost-effective alternative by allowing you to:
 
 *   **Multiplex Ports:** Forward traffic from many source ports on a single external IP to different internal services and ports.
 *   **Reduce Cloud Costs:** Pay for potentially only one cloud load balancer (or even none!) instead of many.
