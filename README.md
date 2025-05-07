@@ -8,7 +8,7 @@
 [![Go Version](https://img.shields.io/badge/Go-1.22+-blue.svg)](https://golang.org/dl/)
 [![Go Report Card](https://goreportcard.com/badge/github.com/snarlysodboxer/undying-proxy)](https://goreportcard.com/report/github.com/snarlysodboxer/undying-proxy)
 
-**UnDyingProxy redirects TCP and UDP traffic from a single external IP to multiple internal Kubernetes services, significantly reducing cloud load balancer costs and simplifying ingress for non-HTTP traffic.**
+**UnDyingProxy redirects TCP and UDP traffic from a single external IP to internal Kubernetes services across namespaces, significantly reducing cloud load balancer costs and simplifying ingress.**
 
 ## Why UnDyingProxy?
 
