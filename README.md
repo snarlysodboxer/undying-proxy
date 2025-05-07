@@ -52,8 +52,6 @@ spec:
     listenPort: 27015
     targetPort: 27015
     targetHost: my-game-server-1001.game-ns.svc.cluster.local
-spec:
-  tcp:
 ```
 
 UnDyingProxy can also be run as a DaemonSet along with round robin DNS to point a domain to your node IPs, and potentially avoid a cloud Loadbalancer altogether. This requires clients to connect directly to node IPs.
