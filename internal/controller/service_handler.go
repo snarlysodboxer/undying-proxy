@@ -89,7 +89,7 @@ func (r *UnDyingProxyReconciler) manageServiceForUnDyingProxy(
 
 // updateService performs the actual update or addition of a ServicePort to a Service.
 // It fetches the latest version of the Service and uses a strategic merge patch
-// (client.MergeFrom) within a RetryOnConflict loop to add or modify the port entry
+// (client.MergeFromWithOptions) within a RetryOnConflict loop to add or modify the port entry
 // corresponding to the unDyingProxyName.
 func (r *UnDyingProxyReconciler) updateService(
 	ctx context.Context,
@@ -129,7 +129,7 @@ func (r *UnDyingProxyReconciler) updateService(
 			serviceCopy.Spec.Ports = append(serviceCopy.Spec.Ports, portSpec)
 		}
 
-		return r.Patch(ctx, serviceCopy, client.MergeFrom(service), patchOptions)
+		return r.Patch(ctx, serviceCopy, client.MergeFromWithOptions(service, client.MergeFromWithOptimisticLock{}), patchOptions)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to update (%s) Service to set Port: (%w)", service.Name, err)
@@ -181,7 +181,7 @@ func (r *UnDyingProxyReconciler) cleanupServiceForUnDyingProxy(
 		}
 
 		log.V(2).Info("Attempting to remove Service port")
-		return r.Patch(ctx, serviceCopy, client.MergeFrom(service), patchOptions)
+		return r.Patch(ctx, serviceCopy, client.MergeFromWithOptions(service, client.MergeFromWithOptimisticLock{}), patchOptions)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to update (%s) Service to remove Port: (%w)", service.Name, err)
